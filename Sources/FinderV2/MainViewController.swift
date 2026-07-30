@@ -1,7 +1,16 @@
 import AppKit
 
 final class MainSplitView: NSSplitView {
+    var onWillResize: (() -> Void)?
+    var onDidResize: (() -> Void)?
+
     override var dividerThickness: CGFloat { 7 }
+
+    override func mouseDown(with event: NSEvent) {
+        onWillResize?()
+        super.mouseDown(with: event)
+        onDidResize?()
+    }
 
     override func drawDivider(in rect: NSRect) {
         NSColor.textBackgroundColor.setFill()
@@ -87,12 +96,19 @@ final class MainViewController: NSViewController {
     private var panes: [PaneViewController] = []
     private var visiblePanes: [PaneViewController] = []
     private var layoutController: NSSplitViewController?
+    private var needsInitialPaneEqualization = false
+    private var lockedLayoutConstraints: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
     private(set) var currentLayout: PaneLayout = .sideBySide
     private let layoutContainer = NSView()
     private let layoutPopUp = NSPopUpButton()
     private let comparisonLabel = NSTextField(labelWithString: "")
 
     var visiblePaneCount: Int { visiblePanes.count }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        equalizeInitialPanesIfNeeded()
+    }
 
     override func loadView() {
         configurePanes()
@@ -309,6 +325,8 @@ final class MainViewController: NSViewController {
     }
 
     func applyLayout(_ layout: PaneLayout) {
+        lockedLayoutConstraints.values.forEach(NSLayoutConstraint.deactivate)
+        lockedLayoutConstraints.removeAll()
         currentLayout = layout
         comparisonLabel.stringValue = ""
         panes.forEach { $0.clearComparison() }
@@ -326,100 +344,85 @@ final class MainViewController: NSViewController {
             controller = makeSplit(
                 isVertical: true,
                 controllers: [panes[0], panes[1]],
-                name: "SideBySide",
                 minimumThickness: 300
             )
         case .stacked:
             controller = makeSplit(
                 isVertical: false,
                 controllers: [panes[0], panes[1]],
-                name: "Stacked",
                 minimumThickness: 220
             )
         case .threeLeft:
             let rightStack = makeSplit(
                 isVertical: false,
                 controllers: [panes[1], panes[2]],
-                name: "ThreeLeftRightStack",
                 minimumThickness: 210
             )
             controller = makeSplit(
                 isVertical: true,
                 controllers: [panes[0], rightStack],
-                name: "ThreeLeft",
                 minimumThickness: 300
             )
         case .threeRight:
             let leftStack = makeSplit(
                 isVertical: false,
                 controllers: [panes[0], panes[1]],
-                name: "ThreeRightLeftStack",
                 minimumThickness: 210
             )
             controller = makeSplit(
                 isVertical: true,
                 controllers: [leftStack, panes[2]],
-                name: "ThreeRight",
                 minimumThickness: 300
             )
         case .threeTop:
             let bottomRow = makeSplit(
                 isVertical: true,
                 controllers: [panes[1], panes[2]],
-                name: "ThreeTopBottomRow",
                 minimumThickness: 280
             )
             controller = makeSplit(
                 isVertical: false,
                 controllers: [panes[0], bottomRow],
-                name: "ThreeTop",
                 minimumThickness: 210
             )
         case .threeBottom:
             let topRow = makeSplit(
                 isVertical: true,
                 controllers: [panes[0], panes[1]],
-                name: "ThreeBottomTopRow",
                 minimumThickness: 280
             )
             controller = makeSplit(
                 isVertical: false,
                 controllers: [topRow, panes[2]],
-                name: "ThreeBottom",
                 minimumThickness: 210
             )
         case .fourGrid:
             let topRow = makeSplit(
                 isVertical: true,
                 controllers: [panes[0], panes[1]],
-                name: "FourGridTop",
                 minimumThickness: 280
             )
             let bottomRow = makeSplit(
                 isVertical: true,
                 controllers: [panes[2], panes[3]],
-                name: "FourGridBottom",
                 minimumThickness: 280
             )
             controller = makeSplit(
                 isVertical: false,
                 controllers: [topRow, bottomRow],
-                name: "FourGrid",
                 minimumThickness: 195
             )
         case .fourColumns:
             controller = makeSplit(
                 isVertical: true,
                 controllers: panes,
-                name: "FourColumns",
-                minimumThickness: 245
+                minimumThickness: 220
             )
         case .fourRows:
             controller = makeSplit(
                 isVertical: false,
                 controllers: panes,
-                name: "FourRows",
-                minimumThickness: 150
+                minimumThickness: 120
             )
         }
 
@@ -435,28 +438,156 @@ final class MainViewController: NSViewController {
             controller.view.trailingAnchor.constraint(equalTo: layoutContainer.trailingAnchor),
             controller.view.bottomAnchor.constraint(equalTo: layoutContainer.bottomAnchor)
         ])
+        lockEqualSplitRatiosRecursively(controller)
         activate(visiblePanes[0])
+
+        layoutContainer.needsLayout = true
+        layoutContainer.layoutSubtreeIfNeeded()
+        needsInitialPaneEqualization = true
+        equalizeInitialPanesIfNeeded()
+        view.needsLayout = true
     }
 
     private func makeSplit(
         isVertical: Bool,
         controllers: [NSViewController],
-        name: String,
         minimumThickness: CGFloat
     ) -> NSSplitViewController {
         let splitController = NSSplitViewController()
         let splitView = MainSplitView()
         splitView.isVertical = isVertical
         splitView.dividerStyle = .thick
-        splitView.autosaveName = "FinderV2Layout-\(name)"
         splitController.splitView = splitView
+        let preferredFraction = 1 / CGFloat(controllers.count)
         controllers.forEach { childController in
             let item = NSSplitViewItem(viewController: childController)
             item.minimumThickness = minimumThickness
+            item.preferredThicknessFraction = preferredFraction
+            item.holdingPriority = .defaultLow
             item.canCollapse = false
             splitController.addSplitViewItem(item)
         }
         return splitController
+    }
+
+    private func equalizeInitialPanesIfNeeded() {
+        guard needsInitialPaneEqualization,
+              layoutContainer.bounds.width > 0,
+              layoutContainer.bounds.height > 0,
+              let layoutController else {
+            return
+        }
+
+        needsInitialPaneEqualization = false
+        equalizeRecursively(layoutController)
+    }
+
+    private func lockEqualSplitRatiosRecursively(
+        _ controller: NSSplitViewController
+    ) {
+        lockSplitRatios(controller.splitView, ratios: nil)
+        controller.splitViewItems.forEach { splitViewItem in
+            guard let nestedController = splitViewItem.viewController as? NSSplitViewController else {
+                return
+            }
+            lockEqualSplitRatiosRecursively(nestedController)
+        }
+    }
+
+    private func lockCurrentSplitRatio(_ splitView: NSSplitView) {
+        guard let firstView = splitView.arrangedSubviews.first else { return }
+        let firstThickness = splitView.isVertical
+            ? firstView.frame.width
+            : firstView.frame.height
+        guard firstThickness > 0 else { return }
+        let ratios = splitView.arrangedSubviews.dropFirst().map { siblingView in
+            let siblingThickness = splitView.isVertical
+                ? siblingView.frame.width
+                : siblingView.frame.height
+            return firstThickness / max(1, siblingThickness)
+        }
+        lockSplitRatios(splitView, ratios: ratios)
+    }
+
+    private func lockSplitRatios(
+        _ splitView: NSSplitView,
+        ratios: [CGFloat]?
+    ) {
+        guard let firstView = splitView.arrangedSubviews.first else { return }
+        let identifier = ObjectIdentifier(splitView)
+        if let oldConstraints = lockedLayoutConstraints.removeValue(forKey: identifier) {
+            NSLayoutConstraint.deactivate(oldConstraints)
+        }
+
+        let constraints = splitView.arrangedSubviews.dropFirst().enumerated().map {
+            offset,
+            siblingView -> NSLayoutConstraint in
+            let multiplier = ratios.flatMap {
+                offset < $0.count ? $0[offset] : nil
+            } ?? 1
+            let constraint: NSLayoutConstraint
+            if splitView.isVertical {
+                constraint = firstView.widthAnchor.constraint(
+                    equalTo: siblingView.widthAnchor,
+                    multiplier: multiplier
+                )
+            } else {
+                constraint = firstView.heightAnchor.constraint(
+                    equalTo: siblingView.heightAnchor,
+                    multiplier: multiplier
+                )
+            }
+            constraint.priority = .init(999)
+            return constraint
+        }
+        NSLayoutConstraint.activate(constraints)
+        lockedLayoutConstraints[identifier] = constraints
+
+        guard let mainSplitView = splitView as? MainSplitView else { return }
+        mainSplitView.onWillResize = { [weak self, weak splitView] in
+            guard let self, let splitView else { return }
+            let identifier = ObjectIdentifier(splitView)
+            guard let constraints = lockedLayoutConstraints.removeValue(
+                forKey: identifier
+            ) else {
+                return
+            }
+            NSLayoutConstraint.deactivate(constraints)
+        }
+        mainSplitView.onDidResize = { [weak self, weak splitView] in
+            guard let self, let splitView else { return }
+            lockCurrentSplitRatio(splitView)
+        }
+    }
+
+    private func equalizeRecursively(_ controller: NSSplitViewController) {
+        let splitView = controller.splitView
+        splitView.layoutSubtreeIfNeeded()
+
+        controller.splitViewItems.forEach { splitViewItem in
+            guard let nestedController = splitViewItem.viewController as? NSSplitViewController else {
+                return
+            }
+            equalizeRecursively(nestedController)
+        }
+
+        splitView.layoutSubtreeIfNeeded()
+        let paneCount = splitView.arrangedSubviews.count
+        if paneCount > 1 {
+            let axisLength = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+            let totalDividerThickness = splitView.dividerThickness * CGFloat(paneCount - 1)
+            let availablePaneThickness = axisLength - totalDividerThickness
+
+            if availablePaneThickness > 0 {
+                for dividerIndex in 0..<(paneCount - 1) {
+                    let precedingPaneCount = CGFloat(dividerIndex + 1)
+                    let dividerPosition =
+                        availablePaneThickness * precedingPaneCount / CGFloat(paneCount)
+                        + splitView.dividerThickness * CGFloat(dividerIndex)
+                    splitView.setPosition(dividerPosition, ofDividerAt: dividerIndex)
+                }
+            }
+        }
     }
 
     private func makeSeparator() -> NSBox {

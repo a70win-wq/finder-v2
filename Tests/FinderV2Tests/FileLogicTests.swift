@@ -191,11 +191,15 @@ struct FileLogicTests {
         controller.view.layoutSubtreeIfNeeded()
         controller.mainSplitView.adjustSubviews()
 
+        controller.mainSplitView.onWillResize?()
         controller.mainSplitView.setPosition(360, ofDividerAt: 0)
+        controller.mainSplitView.onDidResize?()
         controller.view.layoutSubtreeIfNeeded()
         let leftNarrowWidth = controller.mainSplitView.subviews[0].frame.width
 
+        controller.mainSplitView.onWillResize?()
         controller.mainSplitView.setPosition(760, ofDividerAt: 0)
+        controller.mainSplitView.onDidResize?()
         controller.view.layoutSubtreeIfNeeded()
         let leftWideWidth = controller.mainSplitView.subviews[0].frame.width
 

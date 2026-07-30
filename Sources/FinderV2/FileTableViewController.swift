@@ -1,11 +1,115 @@
 import AppKit
 import QuickLookThumbnailing
+import UniformTypeIdentifiers
 
-enum FileViewMode: Int {
+enum FileViewMode: Int, CaseIterable {
     case list
     case icons
     case columns
     case gallery
+
+    var title: String {
+        switch self {
+        case .list: return "清單"
+        case .icons: return "大圖示"
+        case .columns: return "直欄"
+        case .gallery: return "圖庫"
+        }
+    }
+}
+
+enum FileContextMenuCommand: Equatable {
+    case separator
+    case newFolder
+    case paste
+    case viewMode
+    case sort
+    case showViewOptions
+    case toggleHiddenFiles
+    case folderWithSelection
+    case open
+    case openWith
+    case trash
+    case info
+    case rename
+    case compress
+    case duplicate
+    case alias
+    case preview
+    case copy
+    case share
+    case tags
+    case extractZip
+    case cloudDownload
+    case copyPath
+    case revealInFinder
+}
+
+struct FileContextMenuPlanItem: Equatable {
+    let command: FileContextMenuCommand
+    let isEnabled: Bool
+
+    init(_ command: FileContextMenuCommand, isEnabled: Bool = true) {
+        self.command = command
+        self.isEnabled = isEnabled
+    }
+}
+
+struct FileContextMenuPlan: Equatable {
+    let items: [FileContextMenuPlanItem]
+
+    static func make(
+        selectionCount: Int,
+        containsZip: Bool,
+        containsCloudItem: Bool,
+        clipboardHasFiles: Bool
+    ) -> FileContextMenuPlan {
+        guard selectionCount > 0 else {
+            return FileContextMenuPlan(items: [
+                FileContextMenuPlanItem(.newFolder),
+                FileContextMenuPlanItem(.paste, isEnabled: clipboardHasFiles),
+                FileContextMenuPlanItem(.separator),
+                FileContextMenuPlanItem(.viewMode),
+                FileContextMenuPlanItem(.sort),
+                FileContextMenuPlanItem(.showViewOptions),
+                FileContextMenuPlanItem(.toggleHiddenFiles)
+            ])
+        }
+
+        var items = [
+            FileContextMenuPlanItem(.folderWithSelection),
+            FileContextMenuPlanItem(.open),
+            FileContextMenuPlanItem(.openWith),
+            FileContextMenuPlanItem(.separator),
+            FileContextMenuPlanItem(.trash),
+            FileContextMenuPlanItem(.separator),
+            FileContextMenuPlanItem(.info),
+            FileContextMenuPlanItem(.rename),
+            FileContextMenuPlanItem(.compress),
+            FileContextMenuPlanItem(.duplicate),
+            FileContextMenuPlanItem(.alias),
+            FileContextMenuPlanItem(.preview),
+            FileContextMenuPlanItem(.copy),
+            FileContextMenuPlanItem(.separator),
+            FileContextMenuPlanItem(.share),
+            FileContextMenuPlanItem(.separator),
+            FileContextMenuPlanItem(.tags),
+            FileContextMenuPlanItem(.separator),
+            FileContextMenuPlanItem(.showViewOptions),
+            FileContextMenuPlanItem(.separator)
+        ]
+        if containsZip {
+            items.append(FileContextMenuPlanItem(.extractZip))
+        }
+        if containsCloudItem {
+            items.append(FileContextMenuPlanItem(.cloudDownload))
+        }
+        items.append(contentsOf: [
+            FileContextMenuPlanItem(.copyPath),
+            FileContextMenuPlanItem(.revealInFinder)
+        ])
+        return FileContextMenuPlan(items: items)
+    }
 }
 
 private final class ThumbnailCellView: NSTableCellView {
@@ -130,6 +234,7 @@ private final class FileIconCollectionItem: NSCollectionViewItem {
 private final class FinderCollectionView: NSCollectionView {
     var onActivate: (() -> Void)?
     var onDoubleClick: ((IndexPath) -> Void)?
+    var onContextClick: ((NSEvent) -> Void)?
     var onReturn: (() -> Void)?
     var onDelete: (() -> Void)?
     var onPreview: (() -> Void)?
@@ -142,6 +247,12 @@ private final class FinderCollectionView: NSCollectionView {
         if event.clickCount == 2, let clickedIndexPath {
             onDoubleClick?(clickedIndexPath)
         }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onActivate?()
+        onContextClick?(event)
+        super.rightMouseDown(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -163,6 +274,7 @@ private final class FinderCollectionView: NSCollectionView {
 
 private final class FinderBrowser: NSBrowser {
     var onActivate: (() -> Void)?
+    var onContextClick: (() -> Void)?
     var onOpen: (() -> Void)?
     var onDelete: (() -> Void)?
     var onPreview: (() -> Void)?
@@ -170,6 +282,12 @@ private final class FinderBrowser: NSBrowser {
     override func mouseDown(with event: NSEvent) {
         onActivate?()
         super.mouseDown(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onActivate?()
+        onContextClick?()
+        super.rightMouseDown(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -211,10 +329,34 @@ protocol FileTableViewControllerDelegate: AnyObject {
     func fileTableDidRequestInfo(_ controller: FileTableViewController)
     func fileTableDidRequestCopyPath(_ controller: FileTableViewController)
     func fileTableDidRequestReveal(_ controller: FileTableViewController)
+    func fileTable(
+        _ controller: FileTableViewController,
+        didRequestSortBy option: FileSortOption,
+        ascending: Bool
+    )
+    func fileTable(
+        _ controller: FileTableViewController,
+        didRequestViewMode mode: FileViewMode
+    )
+    func fileTableDidRequestNewFolder(_ controller: FileTableViewController)
+    func fileTableDidRequestFolderWithSelection(_ controller: FileTableViewController)
+    func fileTable(
+        _ controller: FileTableViewController,
+        didRequestOpenWith applicationURL: URL
+    )
+    func fileTableDidRequestChooseApplication(_ controller: FileTableViewController)
+    func fileTableDidRequestAlias(_ controller: FileTableViewController)
+    func fileTableDidRequestShowViewOptions(_ controller: FileTableViewController)
+    func fileTableDidRequestToggleHiddenFiles(_ controller: FileTableViewController)
+    func fileTable(
+        _ controller: FileTableViewController,
+        didRequestTag tag: FinderTag?
+    )
 }
 
 final class FinderTableView: NSTableView {
     var onActivate: (() -> Void)?
+    var onContextClick: ((NSEvent) -> Void)?
     var onReturn: (() -> Void)?
     var onDelete: (() -> Void)?
     var onPreview: (() -> Void)?
@@ -222,6 +364,12 @@ final class FinderTableView: NSTableView {
     override func mouseDown(with event: NSEvent) {
         onActivate?()
         super.mouseDown(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        onActivate?()
+        onContextClick?(event)
+        super.rightMouseDown(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -254,6 +402,7 @@ final class FileTableViewController: NSViewController {
     private let galleryScrollView = NSScrollView()
     private let galleryCollectionView = FinderCollectionView()
     private let contextMenu = NSMenu()
+    private var sharingPicker: NSSharingServicePicker?
     let tableView = FinderTableView()
     private let collectionView = FinderCollectionView()
     private(set) var items: [FileItem] = []
@@ -262,6 +411,11 @@ final class FileTableViewController: NSViewController {
     private var browserItemsCache: [URL: [FileItem]] = [:]
     private var galleryRepresentedURL: URL?
     private var comparisonStates: [String: FolderComparisonState] = [:]
+    private var currentSortOption: FileSortOption = .name
+    private var currentSortAscending = true
+    private var currentlyShowsHiddenFiles = false
+    private var isUpdatingSortDescriptors = false
+    private var clipboardHasFilesOverrideForTesting: Bool?
 
     private enum Column {
         static let name = NSUserInterfaceItemIdentifier("name")
@@ -300,6 +454,9 @@ final class FileTableViewController: NSViewController {
             guard let self else { return }
             self.delegate?.fileTableDidActivate(self)
         }
+        tableView.onContextClick = { [weak self] event in
+            self?.prepareTableSelectionForContextMenu(event)
+        }
         tableView.onReturn = { [weak self] in
             guard let self else { return }
             self.delegate?.fileTableDidRequestRename(self)
@@ -313,6 +470,7 @@ final class FileTableViewController: NSViewController {
             self.delegate?.fileTableDidRequestPreview(self)
         }
 
+        contextMenu.autoenablesItems = false
         contextMenu.delegate = self
         tableView.menu = contextMenu
 
@@ -345,6 +503,10 @@ final class FileTableViewController: NSViewController {
         collectionView.onActivate = { [weak self] in
             guard let self else { return }
             self.delegate?.fileTableDidActivate(self)
+        }
+        collectionView.onContextClick = { [weak self] event in
+            guard let self else { return }
+            prepareCollectionSelectionForContextMenu(event, collectionView: collectionView)
         }
         collectionView.onDoubleClick = { [weak self] indexPath in
             guard let self, indexPath.item < self.items.count else { return }
@@ -388,6 +550,10 @@ final class FileTableViewController: NSViewController {
         browser.onActivate = { [weak self] in
             guard let self else { return }
             self.delegate?.fileTableDidActivate(self)
+        }
+        browser.onContextClick = { [weak self] in
+            guard let self else { return }
+            delegate?.fileTableDidActivate(self)
         }
         browser.onOpen = { [weak self] in
             self?.openBrowserSelection()
@@ -452,6 +618,10 @@ final class FileTableViewController: NSViewController {
         galleryCollectionView.onActivate = { [weak self] in
             guard let self else { return }
             self.delegate?.fileTableDidActivate(self)
+        }
+        galleryCollectionView.onContextClick = { [weak self] event in
+            guard let self else { return }
+            prepareCollectionSelectionForContextMenu(event, collectionView: galleryCollectionView)
         }
         galleryCollectionView.onDoubleClick = { [weak self] indexPath in
             guard let self, indexPath.item < self.items.count else { return }
@@ -545,6 +715,26 @@ final class FileTableViewController: NSViewController {
         updateGalleryPreview()
     }
 
+    func setDisplayOptions(
+        sortOption: FileSortOption,
+        ascending: Bool,
+        showHiddenFiles: Bool
+    ) {
+        currentSortOption = sortOption
+        currentSortAscending = ascending
+        currentlyShowsHiddenFiles = showHiddenFiles
+
+        guard let column = tableColumn(for: sortOption) else { return }
+        let descriptor = NSSortDescriptor(
+            key: column.identifier.rawValue,
+            ascending: ascending
+        )
+        isUpdatingSortDescriptors = true
+        tableView.sortDescriptors = [descriptor]
+        tableView.highlightedTableColumn = column
+        isUpdatingSortDescriptors = false
+    }
+
     func showComparison(_ states: [String: FolderComparisonState]) {
         comparisonStates = states
         tableView.reloadData()
@@ -617,6 +807,73 @@ final class FileTableViewController: NSViewController {
         case .gallery:
             return galleryCollectionView.selectionIndexPaths.map(\.item).sorted()
         }
+    }
+
+    func selectListItemForContextMenu(at row: Int) {
+        guard row >= 0, row < items.count else {
+            tableView.deselectAll(nil)
+            return
+        }
+        guard !tableView.selectedRowIndexes.contains(row) else { return }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    }
+
+    func contextMenuTitlesForTesting(clipboardHasFiles: Bool) -> [String] {
+        let menu = contextMenuForTesting(clipboardHasFiles: clipboardHasFiles)
+        return menu.items.map { item in
+            item.isSeparatorItem ? "—" : item.title
+        }
+    }
+
+    func contextMenuItemIsEnabledForTesting(
+        title: String,
+        clipboardHasFiles: Bool
+    ) -> Bool? {
+        contextMenuForTesting(clipboardHasFiles: clipboardHasFiles)
+            .items
+            .first(where: { $0.title == title })?
+            .isEnabled
+    }
+
+    private func contextMenuForTesting(clipboardHasFiles: Bool) -> NSMenu {
+        clipboardHasFilesOverrideForTesting = clipboardHasFiles
+        defer { clipboardHasFilesOverrideForTesting = nil }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menuNeedsUpdate(menu)
+        return menu
+    }
+
+    private func prepareTableSelectionForContextMenu(_ event: NSEvent) {
+        let point = tableView.convert(event.locationInWindow, from: nil)
+        selectListItemForContextMenu(at: tableView.row(at: point))
+    }
+
+    private func prepareBrowserSelectionForContextMenuIfNeeded() {
+        let column = browser.clickedColumn
+        guard column >= 0 else { return }
+
+        let row = browser.clickedRow
+        guard row >= 0 else {
+            browser.selectionIndexPaths = []
+            return
+        }
+        let selectedRows = browser.selectedRowIndexes(inColumn: column) ?? []
+        guard !selectedRows.contains(row) else { return }
+        browser.selectRow(row, inColumn: column)
+    }
+
+    private func prepareCollectionSelectionForContextMenu(
+        _ event: NSEvent,
+        collectionView: NSCollectionView
+    ) {
+        let point = collectionView.convert(event.locationInWindow, from: nil)
+        guard let indexPath = collectionView.indexPathForItem(at: point) else {
+            collectionView.selectionIndexPaths = []
+            return
+        }
+        guard !collectionView.selectionIndexPaths.contains(indexPath) else { return }
+        collectionView.selectionIndexPaths = [indexPath]
     }
 
     private func updateGalleryPreview() {
@@ -714,6 +971,108 @@ final class FileTableViewController: NSViewController {
         delegate?.fileTableDidRequestReveal(self)
     }
 
+    @objc private func menuNewFolder() {
+        delegate?.fileTableDidRequestNewFolder(self)
+    }
+
+    @objc private func menuFolderWithSelection() {
+        delegate?.fileTableDidRequestFolderWithSelection(self)
+    }
+
+    @objc private func menuOpenWith(_ sender: NSMenuItem) {
+        guard let applicationURL = sender.representedObject as? URL else { return }
+        delegate?.fileTable(self, didRequestOpenWith: applicationURL)
+    }
+
+    @objc private func menuChooseApplication() {
+        delegate?.fileTableDidRequestChooseApplication(self)
+    }
+
+    @objc private func menuAlias() {
+        delegate?.fileTableDidRequestAlias(self)
+    }
+
+    @objc private func menuShowViewOptions() {
+        delegate?.fileTableDidRequestShowViewOptions(self)
+    }
+
+    @objc private func menuToggleHiddenFiles() {
+        delegate?.fileTableDidRequestToggleHiddenFiles(self)
+    }
+
+    @objc private func menuViewMode(_ sender: NSMenuItem) {
+        guard let mode = FileViewMode(rawValue: sender.tag) else { return }
+        delegate?.fileTable(self, didRequestViewMode: mode)
+    }
+
+    @objc private func menuSortOption(_ sender: NSMenuItem) {
+        guard let option = FileSortOption(rawValue: sender.tag) else { return }
+        delegate?.fileTable(
+            self,
+            didRequestSortBy: option,
+            ascending: currentSortAscending
+        )
+    }
+
+    @objc private func menuSortAscending() {
+        delegate?.fileTable(
+            self,
+            didRequestSortBy: currentSortOption,
+            ascending: true
+        )
+    }
+
+    @objc private func menuSortDescending() {
+        delegate?.fileTable(
+            self,
+            didRequestSortBy: currentSortOption,
+            ascending: false
+        )
+    }
+
+    @objc private func menuApplyTag(_ sender: NSMenuItem) {
+        guard let tag = FinderTag.allCases.first(where: {
+            $0.colorNumber == sender.tag
+        }) else {
+            return
+        }
+        delegate?.fileTable(self, didRequestTag: tag)
+    }
+
+    @objc private func menuClearTags() {
+        delegate?.fileTable(self, didRequestTag: nil)
+    }
+
+    @objc private func menuShare() {
+        let urls = selectedURLs()
+        guard !urls.isEmpty else { return }
+
+        let picker = NSSharingServicePicker(items: urls)
+        sharingPicker = picker
+        let anchorView = activeContentView()
+        let windowPoint = view.window?.mouseLocationOutsideOfEventStream
+            ?? NSPoint(x: anchorView.bounds.midX, y: anchorView.bounds.midY)
+        let anchorPoint = anchorView.convert(windowPoint, from: nil)
+        picker.show(
+            relativeTo: NSRect(origin: anchorPoint, size: NSSize(width: 1, height: 1)),
+            of: anchorView,
+            preferredEdge: .minY
+        )
+    }
+
+    private func activeContentView() -> NSView {
+        switch viewMode {
+        case .list:
+            return tableView
+        case .icons:
+            return collectionView
+        case .columns:
+            return browser
+        case .gallery:
+            return galleryCollectionView
+        }
+    }
+
     @objc private func browserSelectionChanged() {
         delegate?.fileTableDidActivate(self)
     }
@@ -733,7 +1092,32 @@ final class FileTableViewController: NSViewController {
         column.width = width
         column.minWidth = minWidth
         column.resizingMask = .userResizingMask
+        column.sortDescriptorPrototype = NSSortDescriptor(
+            key: identifier.rawValue,
+            ascending: true
+        )
         tableView.addTableColumn(column)
+    }
+
+    private func tableColumn(for option: FileSortOption) -> NSTableColumn? {
+        let identifier: NSUserInterfaceItemIdentifier
+        switch option {
+        case .name: identifier = Column.name
+        case .size: identifier = Column.size
+        case .modified: identifier = Column.modified
+        case .kind: identifier = Column.kind
+        }
+        return tableView.tableColumn(withIdentifier: identifier)
+    }
+
+    private func sortOption(for key: String) -> FileSortOption? {
+        switch NSUserInterfaceItemIdentifier(key) {
+        case Column.name: return .name
+        case Column.size: return .size
+        case Column.modified: return .modified
+        case Column.kind: return .kind
+        default: return nil
+        }
     }
 
     private func dragOperation() -> FileTransferOperation {
@@ -880,6 +1264,25 @@ extension FileTableViewController: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         delegate?.fileTableDidActivate(self)
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]
+    ) {
+        guard !isUpdatingSortDescriptors,
+              let descriptor = tableView.sortDescriptors.first,
+              let key = descriptor.key,
+              let option = sortOption(for: key) else {
+            return
+        }
+        currentSortOption = option
+        currentSortAscending = descriptor.ascending
+        delegate?.fileTable(
+            self,
+            didRequestSortBy: option,
+            ascending: descriptor.ascending
+        )
     }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
@@ -1069,125 +1472,414 @@ extension FileTableViewController: NSBrowserDelegate {
 extension FileTableViewController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let hasSelection = !selectedItems().isEmpty
-        let singleSelection = selectedItems().count == 1
-
-        let open = menu.addItem(
-            withTitle: "開啟",
-            action: #selector(menuOpen),
-            keyEquivalent: ""
-        )
-        open.target = self
-        open.isEnabled = hasSelection
-
-        let preview = menu.addItem(
-            withTitle: "快速預覽",
-            action: #selector(menuPreview),
-            keyEquivalent: ""
-        )
-        preview.target = self
-        preview.isEnabled = hasSelection
-
-        menu.addItem(.separator())
-        let copy = menu.addItem(
-            withTitle: "複製",
-            action: #selector(menuCopy),
-            keyEquivalent: ""
-        )
-        copy.target = self
-        copy.isEnabled = hasSelection
-
-        let paste = menu.addItem(
-            withTitle: "貼上",
-            action: #selector(menuPaste),
-            keyEquivalent: ""
-        )
-        paste.target = self
-
-        let duplicate = menu.addItem(
-            withTitle: "製作副本",
-            action: #selector(menuDuplicate),
-            keyEquivalent: ""
-        )
-        duplicate.target = self
-        duplicate.isEnabled = hasSelection
-
-        let rename = menu.addItem(
-            withTitle: "改名",
-            action: #selector(menuRename),
-            keyEquivalent: ""
-        )
-        rename.target = self
-        rename.isEnabled = singleSelection
-
-        let batchRename = menu.addItem(
-            withTitle: "批量改名…",
-            action: #selector(menuBatchRename),
-            keyEquivalent: ""
-        )
-        batchRename.target = self
-        batchRename.isEnabled = selectedItems().count > 1
-
-        let zip = menu.addItem(
-            withTitle: "壓縮成 ZIP",
-            action: #selector(menuCreateZip),
-            keyEquivalent: ""
-        )
-        zip.target = self
-        zip.isEnabled = hasSelection
-
-        let extract = menu.addItem(
-            withTitle: "解壓 ZIP",
-            action: #selector(menuExtractZip),
-            keyEquivalent: ""
-        )
-        extract.target = self
-        extract.isEnabled = selectedItems().contains {
+        prepareBrowserSelectionForContextMenuIfNeeded()
+        let selected = selectedItems()
+        let containsZip = selected.contains {
             $0.url.pathExtension.lowercased() == "zip"
         }
-
-        let download = menu.addItem(
-            withTitle: "立即下載雲端檔案",
-            action: #selector(menuCloudDownload),
-            keyEquivalent: ""
-        )
-        download.target = self
-        download.isEnabled = selectedItems().contains {
+        let containsCloudItem = selected.contains {
             $0.cloudAvailability == .onlineOnly || $0.cloudAvailability == .downloading
+        }
+        let plan = FileContextMenuPlan.make(
+            selectionCount: selected.count,
+            containsZip: containsZip,
+            containsCloudItem: containsCloudItem,
+            clipboardHasFiles: clipboardHasFilesOverrideForTesting
+                ?? clipboardContainsFileURLs()
+        )
+
+        for planItem in plan.items {
+            switch planItem.command {
+            case .separator:
+                menu.addItem(.separator())
+
+            case .newFolder:
+                addMenuItem(
+                    to: menu,
+                    title: "新增資料夾",
+                    action: #selector(menuNewFolder),
+                    keyEquivalent: "n",
+                    modifiers: [.command, .shift]
+                )
+
+            case .paste:
+                addMenuItem(
+                    to: menu,
+                    title: "貼上項目",
+                    action: #selector(menuPaste),
+                    keyEquivalent: "v",
+                    modifiers: [.command],
+                    isEnabled: planItem.isEnabled
+                )
+
+            case .viewMode:
+                addSubmenu(
+                    makeViewModeMenu(),
+                    to: menu,
+                    title: "顯示方式"
+                )
+
+            case .sort:
+                addSubmenu(
+                    makeSortMenu(),
+                    to: menu,
+                    title: "排列方式"
+                )
+
+            case .showViewOptions:
+                addMenuItem(
+                    to: menu,
+                    title: "顯示選項…",
+                    action: #selector(menuShowViewOptions),
+                    keyEquivalent: "j",
+                    modifiers: [.command]
+                )
+
+            case .toggleHiddenFiles:
+                addMenuItem(
+                    to: menu,
+                    title: currentlyShowsHiddenFiles ? "隱藏隱藏檔案" : "顯示隱藏檔案",
+                    action: #selector(menuToggleHiddenFiles),
+                    keyEquivalent: ".",
+                    modifiers: [.command, .shift]
+                )
+
+            case .folderWithSelection:
+                addMenuItem(
+                    to: menu,
+                    title: "新增包含所選 \(selected.count) 個項目的資料夾",
+                    action: #selector(menuFolderWithSelection),
+                    keyEquivalent: "n",
+                    modifiers: [.command, .control]
+                )
+
+            case .open:
+                let title = selected.count == 1 ? "開啟" : "開啟 \(selected.count) 個項目"
+                addMenuItem(
+                    to: menu,
+                    title: title,
+                    action: #selector(menuOpen),
+                    keyEquivalent: "o",
+                    modifiers: [.command]
+                )
+
+            case .openWith:
+                addSubmenu(
+                    makeOpenWithMenu(for: selected.map(\.url)),
+                    to: menu,
+                    title: "打開檔案的應用程式"
+                )
+
+            case .trash:
+                addMenuItem(
+                    to: menu,
+                    title: "丟到垃圾桶",
+                    action: #selector(menuTrash),
+                    keyEquivalent: "\u{8}",
+                    modifiers: [.command]
+                )
+
+            case .info:
+                addMenuItem(
+                    to: menu,
+                    title: "取得資料",
+                    action: #selector(menuInfo),
+                    keyEquivalent: "i",
+                    modifiers: [.command]
+                )
+
+            case .rename:
+                addMenuItem(
+                    to: menu,
+                    title: selected.count == 1
+                        ? "重新命名…"
+                        : "重新命名 \(selected.count) 個項目…",
+                    action: selected.count == 1
+                        ? #selector(menuRename)
+                        : #selector(menuBatchRename),
+                    keyEquivalent: "\r",
+                    modifiers: []
+                )
+
+            case .compress:
+                addMenuItem(
+                    to: menu,
+                    title: selected.count == 1 ? "壓縮" : "壓縮 \(selected.count) 個項目",
+                    action: #selector(menuCreateZip)
+                )
+
+            case .duplicate:
+                addMenuItem(
+                    to: menu,
+                    title: selected.count == 1 ? "複製" : "複製 \(selected.count) 個項目",
+                    action: #selector(menuDuplicate),
+                    keyEquivalent: "d",
+                    modifiers: [.command]
+                )
+
+            case .alias:
+                addMenuItem(
+                    to: menu,
+                    title: selected.count == 1 ? "製作替身" : "製作 \(selected.count) 個替身",
+                    action: #selector(menuAlias),
+                    keyEquivalent: "l",
+                    modifiers: [.command]
+                )
+
+            case .preview:
+                addMenuItem(
+                    to: menu,
+                    title: selected.count == 1 ? "快速查看" : "快速查看 \(selected.count) 個項目",
+                    action: #selector(menuPreview),
+                    keyEquivalent: " ",
+                    modifiers: []
+                )
+
+            case .copy:
+                addMenuItem(
+                    to: menu,
+                    title: selected.count == 1 ? "拷貝" : "拷貝 \(selected.count) 個項目",
+                    action: #selector(menuCopy),
+                    keyEquivalent: "c",
+                    modifiers: [.command]
+                )
+
+            case .share:
+                addMenuItem(
+                    to: menu,
+                    title: "分享…",
+                    action: #selector(menuShare)
+                )
+
+            case .tags:
+                addSubmenu(
+                    makeTagsMenu(),
+                    to: menu,
+                    title: "標籤"
+                )
+
+            case .extractZip:
+                addMenuItem(
+                    to: menu,
+                    title: "解壓 ZIP",
+                    action: #selector(menuExtractZip)
+                )
+
+            case .cloudDownload:
+                addMenuItem(
+                    to: menu,
+                    title: "立即下載雲端檔案",
+                    action: #selector(menuCloudDownload)
+                )
+
+            case .copyPath:
+                addMenuItem(
+                    to: menu,
+                    title: "複製路徑",
+                    action: #selector(menuCopyPath),
+                    keyEquivalent: "c",
+                    modifiers: [.command, .option]
+                )
+
+            case .revealInFinder:
+                addMenuItem(
+                    to: menu,
+                    title: "在 Apple Finder 顯示",
+                    action: #selector(menuReveal)
+                )
+            }
+        }
+    }
+
+    @discardableResult
+    private func addMenuItem(
+        to menu: NSMenu,
+        title: String,
+        action: Selector,
+        keyEquivalent: String = "",
+        modifiers: NSEvent.ModifierFlags = [],
+        isEnabled: Bool = true
+    ) -> NSMenuItem {
+        let item = menu.addItem(
+            withTitle: title,
+            action: action,
+            keyEquivalent: keyEquivalent
+        )
+        item.target = self
+        item.isEnabled = isEnabled
+        if !keyEquivalent.isEmpty {
+            item.keyEquivalentModifierMask = modifiers
+        }
+        return item
+    }
+
+    private func addSubmenu(_ submenu: NSMenu, to menu: NSMenu, title: String) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.submenu = submenu
+        menu.addItem(item)
+    }
+
+    private func clipboardContainsFileURLs() -> Bool {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true
+        ]
+        return NSPasteboard.general.canReadObject(
+            forClasses: [NSURL.self],
+            options: options
+        )
+    }
+
+    private func makeOpenWithMenu(for urls: [URL]) -> NSMenu {
+        let menu = NSMenu(title: "打開檔案的應用程式")
+        guard let firstURL = urls.first else { return menu }
+
+        let workspace = NSWorkspace.shared
+        var applicationURLs = workspace.urlsForApplications(toOpen: firstURL)
+        if urls.count > 1 {
+            var commonPaths = Set(applicationURLs.map(\.standardizedFileURL.path))
+            for url in urls.dropFirst() {
+                commonPaths.formIntersection(
+                    workspace.urlsForApplications(toOpen: url).map(\.standardizedFileURL.path)
+                )
+            }
+            applicationURLs = applicationURLs.filter {
+                commonPaths.contains($0.standardizedFileURL.path)
+            }
+        }
+
+        var seenPaths = Set<String>()
+        applicationURLs = applicationURLs
+            .filter { seenPaths.insert($0.standardizedFileURL.path).inserted }
+            .sorted {
+                FileManager.default.displayName(atPath: $0.path)
+                    .localizedStandardCompare(
+                        FileManager.default.displayName(atPath: $1.path)
+                    ) == .orderedAscending
+            }
+
+        let defaultApplication = workspace.urlForApplication(toOpen: firstURL)?
+            .standardizedFileURL
+        if applicationURLs.isEmpty {
+            let empty = NSMenuItem(
+                title: "冇合適應用程式",
+                action: nil,
+                keyEquivalent: ""
+            )
+            empty.isEnabled = false
+            menu.addItem(empty)
+        } else {
+            for applicationURL in applicationURLs {
+                let item = menu.addItem(
+                    withTitle: FileManager.default.displayName(atPath: applicationURL.path),
+                    action: #selector(menuOpenWith(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = applicationURL
+                item.image = workspace.icon(forFile: applicationURL.path)
+                item.image?.size = NSSize(width: 16, height: 16)
+                if applicationURL.standardizedFileURL == defaultApplication {
+                    item.state = .on
+                }
+            }
         }
 
         menu.addItem(.separator())
-        let info = menu.addItem(
-            withTitle: "取得資料",
-            action: #selector(menuInfo),
+        let other = menu.addItem(
+            withTitle: "其他…",
+            action: #selector(menuChooseApplication),
             keyEquivalent: ""
         )
-        info.target = self
-        info.isEnabled = singleSelection
+        other.target = self
+        return menu
+    }
 
-        let copyPath = menu.addItem(
-            withTitle: "複製路徑",
-            action: #selector(menuCopyPath),
-            keyEquivalent: ""
-        )
-        copyPath.target = self
-        copyPath.isEnabled = hasSelection
+    private func makeViewModeMenu() -> NSMenu {
+        let menu = NSMenu(title: "顯示方式")
+        for mode in FileViewMode.allCases {
+            let keyEquivalent: String
+            switch mode {
+            case .icons: keyEquivalent = "1"
+            case .list: keyEquivalent = "2"
+            case .columns: keyEquivalent = "3"
+            case .gallery: keyEquivalent = "4"
+            }
+            let item = menu.addItem(
+                withTitle: mode.title,
+                action: #selector(menuViewMode(_:)),
+                keyEquivalent: keyEquivalent
+            )
+            item.target = self
+            item.tag = mode.rawValue
+            item.keyEquivalentModifierMask = [.command]
+            item.state = mode == viewMode ? .on : .off
+        }
+        return menu
+    }
 
-        let reveal = menu.addItem(
-            withTitle: "在 Finder 顯示",
-            action: #selector(menuReveal),
-            keyEquivalent: ""
-        )
-        reveal.target = self
-        reveal.isEnabled = hasSelection
+    private func makeSortMenu() -> NSMenu {
+        let menu = NSMenu(title: "排列方式")
+        for option in FileSortOption.allCases {
+            let item = menu.addItem(
+                withTitle: option.title,
+                action: #selector(menuSortOption(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = option.rawValue
+            item.state = option == currentSortOption ? .on : .off
+        }
 
         menu.addItem(.separator())
-        let trash = menu.addItem(
-            withTitle: "搬去垃圾桶",
-            action: #selector(menuTrash),
+        let ascending = menu.addItem(
+            withTitle: "由細至大",
+            action: #selector(menuSortAscending),
             keyEquivalent: ""
         )
-        trash.target = self
-        trash.isEnabled = hasSelection
+        ascending.target = self
+        ascending.state = currentSortAscending ? .on : .off
+
+        let descending = menu.addItem(
+            withTitle: "由大至細",
+            action: #selector(menuSortDescending),
+            keyEquivalent: ""
+        )
+        descending.target = self
+        descending.state = currentSortAscending ? .off : .on
+        return menu
+    }
+
+    private func makeTagsMenu() -> NSMenu {
+        let menu = NSMenu(title: "標籤")
+        for tag in FinderTag.allCases {
+            let item = menu.addItem(
+                withTitle: tag.title,
+                action: #selector(menuApplyTag(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = tag.colorNumber
+            item.image = tagImage(color: tag.color)
+        }
+        menu.addItem(.separator())
+        let clear = menu.addItem(
+            withTitle: "清除標籤",
+            action: #selector(menuClearTags),
+            keyEquivalent: ""
+        )
+        clear.target = self
+        return menu
+    }
+
+    private func tagImage(color: NSColor) -> NSImage {
+        guard let image = NSImage(
+            systemSymbolName: "circle.fill",
+            accessibilityDescription: "標籤"
+        ) else {
+            return NSImage(size: NSSize(width: 12, height: 12))
+        }
+        let palette = NSImage.SymbolConfiguration(paletteColors: [color])
+        let size = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        return image.withSymbolConfiguration(palette.applying(size)) ?? image
     }
 }

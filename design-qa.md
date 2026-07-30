@@ -1,25 +1,65 @@
 # Finder v2.0 Design QA
 
-## Visual target
+## Source truth
 
-- Apple Finder reference supplied by the user.
-- Target qualities: native macOS titlebar, Finder-style sidebar, compact toolbar controls, flat list rows, system typography, restrained separators and selection colors.
+- Apple Finder visual reference:
+  `/var/folders/ck/w7gkcqhx7vvfm4xhhk1kkdpc0000gp/T/codex-clipboard-0889bf14-149c-4ee0-97a2-6ca6132288bb.png`
+- Finder and Finder v2.0 context-menu comparison:
+  `/var/folders/ck/w7gkcqhx7vvfm4xhhk1kkdpc0000gp/T/codex-clipboard-85502dfb-4b66-4f0d-bf8b-28d4027d06f0.png`
+- Final installed-app capture:
+  `/var/folders/ck/w7gkcqhx7vvfm4xhhk1kkdpc0000gp/T/com.openai.sky.CUAService/Finder v2.0 Screenshot 2026-07-31 at 12.02.30 AM.jpeg`
+- Same-scale comparison montage:
+  `/tmp/FinderV2-design-qa-comparison.png`
 
-## Final comparison
+The Apple Finder source was captured at 3600 × 2338 pixels (1800 × 1169 points).
+Its content area was cropped to 1800 × 1050.5 points and scaled to the final
+1316 × 768 app viewport for comparison.
 
-- Window chrome: passed. Uses a transparent full-size macOS titlebar with native traffic lights.
-- Global dual-pane tools: passed. Compare, sync and job controls are grouped in the titlebar and use native symbols.
-- Pane toolbars: passed. Navigation, path, view, refresh and folder controls use compact native toolbar styling.
-- Sidebar: passed. Uses a clean white semantic background, source-list selection, system icons and Finder-like spacing.
-- File list: passed. Uses plain table styling, compact rows, subtle alternating backgrounds, smaller thumbnails and native column headers.
-- Search and sort: passed. Compact controls align with the Finder toolbar rhythm.
-- Status and dividers: passed. Heavy borders were removed; dividers and status areas are quiet and system-colored.
-- Dark-mode compatibility: passed by construction through semantic AppKit colors and materials.
-- Flexible layouts: passed. The native layout selector supports left/right, top/bottom, four three-pane arrangements, a four-pane grid, four columns and four rows.
-- Existing behavior: passed. All 14 file-operation and layout tests remain green and list/icon switching was checked in the installed app.
+## State coverage
+
+- Light appearance, maximized window, left/right two-pane layout.
+- Four-pane grid and three-pane layouts.
+- Manually resized pane divider.
+- Selected-file and blank-area context menus.
+- Mounted and unmounted external-volume states.
+- List sorting from the column header.
+
+## Visual comparison
+
+- Typography: passed. Native AppKit system type, weights and sizes match the
+  Finder hierarchy.
+- Spacing and alignment: passed. Sidebar rows, compact toolbars, list headers,
+  status rows and split dividers align consistently.
+- Colors and materials: passed. White semantic content backgrounds, native
+  selection colors and restrained separators match the Finder target.
+- Icons and thumbnails: passed. Native SF Symbols and file thumbnails are used.
+- Copy: passed. Visible labels and actions use concise Traditional Chinese.
+- Flexible layouts: passed. Two-, three- and four-pane layouts divide evenly
+  and stay aligned when the window changes size. A manual divider adjustment is
+  preserved without breaking the other layout ratios.
+- Context menu: passed. The app uses a native macOS menu and now includes the
+  Finder-like file and blank-area actions. The final accessibility tree was
+  checked because the Computer Use capture does not expose a screenshot while a
+  native menu is open.
+
+## Interaction checks
+
+- Column-header sorting and ascending/descending direction: passed.
+- Selected-file and blank-area context menus: passed.
+- Layout switching and divider dragging: passed.
+- External disk mount and unmount without restarting the app: passed.
+- Full automated suite: 31 of 31 tests passed.
+
+## Comparison history
+
+The earlier build showed uneven pane sizing after some layout changes and had a
+short context menu. The final build adds ratio-aware pane sizing, complete native
+menus, live volume updates and clickable list headers. No remaining P0, P1 or P2
+visual mismatches were found.
 
 ## Intentional difference
 
-Finder v2.0 keeps both folders inside one window and therefore retains a small shared compare/sync toolbar. Apple Finder does not have this dual-pane workflow.
+Finder v2.0 keeps multiple folders inside one window, so it retains a compact
+shared compare, sync and work-list toolbar that Apple Finder does not have.
 
 final result: passed

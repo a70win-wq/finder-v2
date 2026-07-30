@@ -191,6 +191,26 @@ struct SidebarLocation: Hashable {
     var isExternalVolume = false
 }
 
+struct MountedVolumeDescriptor: Hashable {
+    let url: URL
+    let localizedName: String?
+    let isInternal: Bool?
+    let isRemovable: Bool?
+    let isEjectable: Bool?
+    let isBrowsable: Bool?
+
+    var shouldAppearAsExternalVolume: Bool {
+        guard isBrowsable != false else { return false }
+        if isInternal == false || isRemovable == true || isEjectable == true {
+            return true
+        }
+        if isInternal == true {
+            return false
+        }
+        return url.standardizedFileURL.path.hasPrefix("/Volumes/")
+    }
+}
+
 struct FavoriteEntry: Codable, Hashable, Identifiable {
     let id: UUID
     var path: String
@@ -277,7 +297,18 @@ final class FavoriteStore {
 }
 
 enum SidebarLocationProvider {
-    static func locations(fileManager: FileManager = .default) -> [SidebarLocation] {
+    private static let volumeResourceKeys: Set<URLResourceKey> = [
+        .volumeIsInternalKey,
+        .volumeIsRemovableKey,
+        .volumeIsEjectableKey,
+        .volumeIsBrowsableKey,
+        .volumeLocalizedNameKey
+    ]
+
+    static func locations(
+        fileManager: FileManager = .default,
+        mountedVolumes: [MountedVolumeDescriptor]? = nil
+    ) -> [SidebarLocation] {
         let home = fileManager.homeDirectoryForCurrentUser
         var locations: [SidebarLocation] = [
             SidebarLocation(title: "主目錄", url: home, symbolName: "house"),
@@ -319,26 +350,47 @@ enum SidebarLocationProvider {
             }
         }
 
-        let volumes = URL(fileURLWithPath: "/Volumes", isDirectory: true)
-        if let volumeURLs = try? fileManager.contentsOfDirectory(
-            at: volumes,
-            includingPropertiesForKeys: [.volumeIsInternalKey],
-            options: [.skipsHiddenFiles]
-        ) {
-            for volumeURL in volumeURLs.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-                if volumeURL.lastPathComponent == "Macintosh HD" { continue }
-                locations.append(
-                    SidebarLocation(
-                        title: volumeURL.lastPathComponent,
-                        url: volumeURL,
-                        symbolName: "externaldrive",
-                        isExternalVolume: true
-                    )
-                )
+        let externalVolumes = (mountedVolumes ?? discoverMountedVolumes(fileManager: fileManager))
+            .filter(\.shouldAppearAsExternalVolume)
+            .sorted {
+                let left = $0.localizedName ?? $0.url.lastPathComponent
+                let right = $1.localizedName ?? $1.url.lastPathComponent
+                return left.localizedStandardCompare(right) == .orderedAscending
             }
+
+        for volume in externalVolumes {
+            locations.append(
+                SidebarLocation(
+                    title: volume.localizedName ?? fileManager.displayName(atPath: volume.url.path),
+                    url: volume.url,
+                    symbolName: "externaldrive",
+                    isExternalVolume: true
+                )
+            )
         }
 
         return locations.filter { fileManager.fileExists(atPath: $0.url.path) }
+    }
+
+    private static func discoverMountedVolumes(
+        fileManager: FileManager
+    ) -> [MountedVolumeDescriptor] {
+        let urls = fileManager.mountedVolumeURLs(
+            includingResourceValuesForKeys: Array(volumeResourceKeys),
+            options: [.skipHiddenVolumes]
+        ) ?? []
+
+        return urls.map { url in
+            let values = try? url.resourceValues(forKeys: volumeResourceKeys)
+            return MountedVolumeDescriptor(
+                url: url.standardizedFileURL,
+                localizedName: values?.volumeLocalizedName,
+                isInternal: values?.volumeIsInternal,
+                isRemovable: values?.volumeIsRemovable,
+                isEjectable: values?.volumeIsEjectable,
+                isBrowsable: values?.volumeIsBrowsable
+            )
+        }
     }
 }
 

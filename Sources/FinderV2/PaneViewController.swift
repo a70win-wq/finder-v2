@@ -1,5 +1,6 @@
 import AppKit
 import Quartz
+import UniformTypeIdentifiers
 
 final class PaneViewController: NSViewController {
     let storageKey: String
@@ -28,9 +29,9 @@ final class PaneViewController: NSViewController {
     private var historyIndex = -1
     private var reloadRequestID = 0
     private var allItems: [FileItem] = []
-    private var sortOption: FileSortOption = .name
-    private var sortAscending = true
-    private var showHiddenFiles = false
+    private(set) var sortOption: FileSortOption = .name
+    private(set) var sortAscending = true
+    private(set) var showHiddenFiles = false
     private var quickLookURLs: [URL] = []
     private(set) var currentDirectory: URL
     var currentItems: [FileItem] { allItems }
@@ -298,6 +299,11 @@ final class PaneViewController: NSViewController {
         sortPopUp.selectItem(at: sortOption.rawValue)
         updateSortDirectionButton()
         updateHiddenFilesButton()
+        fileTableController.setDisplayOptions(
+            sortOption: sortOption,
+            ascending: sortAscending,
+            showHiddenFiles: showHiddenFiles
+        )
 
         NotificationCenter.default.addObserver(
             self,
@@ -470,6 +476,239 @@ final class PaneViewController: NSViewController {
                     self.showMessage(title: "有副本整唔到", message: ErrorMessage.text(for: error))
                 }
                 NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
+            }
+        }
+    }
+
+    func createFolderWithSelectedItems() {
+        didActivate?(self)
+        let sourceURLs = fileTableController.selectedURLs()
+        guard !sourceURLs.isEmpty else { return }
+
+        let desiredFolder = currentDirectory.appendingPathComponent(
+            "包含項目的新資料夾",
+            isDirectory: true
+        )
+        let folderURL = FileTransferCoordinator.availableURL(for: desiredFolder)
+
+        OperationStatusCenter.shared.begin(count: sourceURLs.count)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var movedPairs: [(original: URL, insideFolder: URL)] = []
+            var operationError: Error?
+
+            do {
+                try FileManager.default.createDirectory(
+                    at: folderURL,
+                    withIntermediateDirectories: false
+                )
+                for sourceURL in sourceURLs {
+                    let destination = folderURL.appendingPathComponent(
+                        sourceURL.lastPathComponent,
+                        isDirectory: sourceURL.hasDirectoryPath
+                    )
+                    try FileManager.default.moveItem(at: sourceURL, to: destination)
+                    movedPairs.append((sourceURL, destination))
+                    OperationStatusCenter.shared.finish()
+                }
+            } catch {
+                operationError = error
+                for pair in movedPairs.reversed()
+                    where FileManager.default.fileExists(atPath: pair.insideFolder.path) {
+                    try? FileManager.default.moveItem(
+                        at: pair.insideFolder,
+                        to: pair.original
+                    )
+                }
+                try? FileManager.default.removeItem(at: folderURL)
+                for _ in movedPairs.count..<sourceURLs.count {
+                    OperationStatusCenter.shared.finish()
+                }
+            }
+
+            DispatchQueue.main.async {
+                if operationError == nil {
+                    self.view.window?.undoManager?.registerUndo(withTarget: self) { target in
+                        target.undoFolderWithSelection(
+                            folderURL: folderURL,
+                            movedPairs: movedPairs
+                        )
+                    }
+                    self.view.window?.undoManager?.setActionName("新增包含項目的資料夾")
+                } else if let operationError {
+                    self.showMessage(
+                        title: "新增唔到資料夾",
+                        message: ErrorMessage.text(for: operationError)
+                    )
+                }
+                NotificationCenter.default.post(
+                    name: .finderV2FileSystemChanged,
+                    object: nil
+                )
+            }
+        }
+    }
+
+    func openSelectedItems(withApplicationAt applicationURL: URL) {
+        didActivate?(self)
+        let urls = fileTableController.selectedURLs()
+        guard !urls.isEmpty else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.open(
+            urls,
+            withApplicationAt: applicationURL,
+            configuration: configuration
+        ) { [weak self] _, error in
+            guard let error else { return }
+            DispatchQueue.main.async {
+                self?.showMessage(
+                    title: "開唔到檔案",
+                    message: ErrorMessage.text(for: error)
+                )
+            }
+        }
+    }
+
+    func chooseApplicationForSelectedItems() {
+        didActivate?(self)
+        guard !fileTableController.selectedURLs().isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.title = "選擇應用程式"
+        panel.prompt = "開啟"
+        panel.allowedContentTypes = [.application]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        guard panel.runModal() == .OK, let applicationURL = panel.url else { return }
+        openSelectedItems(withApplicationAt: applicationURL)
+    }
+
+    func createAliasesForSelection() {
+        didActivate?(self)
+        let sourceURLs = fileTableController.selectedURLs()
+        guard !sourceURLs.isEmpty else { return }
+
+        OperationStatusCenter.shared.begin(count: sourceURLs.count)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var createdURLs: [URL] = []
+            var firstError: Error?
+
+            for sourceURL in sourceURLs {
+                let desiredURL = self.aliasDestination(for: sourceURL)
+                let destinationURL = FileTransferCoordinator.availableURL(for: desiredURL)
+                do {
+                    try FileManager.default.createSymbolicLink(
+                        at: destinationURL,
+                        withDestinationURL: sourceURL
+                    )
+                    createdURLs.append(destinationURL)
+                } catch {
+                    firstError = firstError ?? error
+                }
+                OperationStatusCenter.shared.finish()
+            }
+
+            DispatchQueue.main.async {
+                if !createdURLs.isEmpty {
+                    self.view.window?.undoManager?.registerUndo(withTarget: self) { target in
+                        target.undoCreatedItems(createdURLs)
+                    }
+                    self.view.window?.undoManager?.setActionName("製作替身")
+                }
+                if let firstError {
+                    self.showMessage(
+                        title: "有替身整唔到",
+                        message: ErrorMessage.text(for: firstError)
+                    )
+                }
+                NotificationCenter.default.post(
+                    name: .finderV2FileSystemChanged,
+                    object: nil
+                )
+            }
+        }
+    }
+
+    func showViewOptions() {
+        didActivate?(self)
+
+        let viewModePopUp = NSPopUpButton()
+        FileViewMode.allCases.forEach { viewModePopUp.addItem(withTitle: $0.title) }
+        viewModePopUp.selectItem(at: viewModeControl.selectedSegment)
+
+        let sortPopUp = NSPopUpButton()
+        FileSortOption.allCases.forEach { sortPopUp.addItem(withTitle: $0.title) }
+        sortPopUp.selectItem(at: sortOption.rawValue)
+
+        let directionPopUp = NSPopUpButton()
+        directionPopUp.addItems(withTitles: ["由細至大", "由大至細"])
+        directionPopUp.selectItem(at: sortAscending ? 0 : 1)
+
+        let hiddenCheckBox = NSButton(
+            checkboxWithTitle: "顯示隱藏檔案",
+            target: nil,
+            action: nil
+        )
+        hiddenCheckBox.state = showHiddenFiles ? .on : .off
+
+        let stack = NSStackView(views: [
+            labeledControl(title: "顯示方式", control: viewModePopUp),
+            labeledControl(title: "排列方式", control: sortPopUp),
+            labeledControl(title: "次序", control: directionPopUp),
+            hiddenCheckBox
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.frame = NSRect(x: 0, y: 0, width: 300, height: 150)
+
+        let alert = NSAlert()
+        alert.messageText = "顯示選項"
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "套用")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let mode = FileViewMode(rawValue: viewModePopUp.indexOfSelectedItem) ?? .list
+        let selectedSort = FileSortOption(rawValue: sortPopUp.indexOfSelectedItem) ?? .name
+        let ascending = directionPopUp.indexOfSelectedItem == 0
+        let shouldShowHiddenFiles = hiddenCheckBox.state == .on
+
+        changeViewMode(to: mode)
+        updateSorting(option: selectedSort, ascending: ascending)
+        if showHiddenFiles != shouldShowHiddenFiles {
+            toggleHiddenFiles()
+        }
+    }
+
+    func applyTag(_ tag: FinderTag?) {
+        didActivate?(self)
+        let urls = fileTableController.selectedURLs()
+        guard !urls.isEmpty else { return }
+
+        OperationStatusCenter.shared.begin(count: urls.count)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var firstError: Error?
+            for url in urls {
+                do {
+                    try FileTagEngine.apply(tag, to: [url])
+                } catch {
+                    firstError = firstError ?? error
+                }
+                OperationStatusCenter.shared.finish()
+            }
+            DispatchQueue.main.async {
+                if let firstError {
+                    self.showMessage(
+                        title: "有標籤加唔到",
+                        message: ErrorMessage.text(for: firstError)
+                    )
+                }
+                NotificationCenter.default.post(
+                    name: .finderV2FileSystemChanged,
+                    object: nil
+                )
             }
         }
     }
@@ -908,8 +1147,7 @@ final class PaneViewController: NSViewController {
     @objc private func viewModeChanged() {
         didActivate?(self)
         let mode = FileViewMode(rawValue: viewModeControl.selectedSegment) ?? .list
-        fileTableController.setViewMode(mode)
-        UserDefaults.standard.set(mode.rawValue, forKey: "\(storageKey)-ViewMode")
+        changeViewMode(to: mode)
     }
 
     @objc private func searchChanged() {
@@ -919,17 +1157,15 @@ final class PaneViewController: NSViewController {
 
     @objc private func sortChanged() {
         didActivate?(self)
-        sortOption = FileSortOption(rawValue: sortPopUp.indexOfSelectedItem) ?? .name
-        UserDefaults.standard.set(sortOption.rawValue, forKey: "\(storageKey)-SortOption")
-        applyDisplayOptions()
+        updateSorting(
+            option: FileSortOption(rawValue: sortPopUp.indexOfSelectedItem) ?? .name,
+            ascending: sortAscending
+        )
     }
 
     @objc private func sortDirectionChanged() {
         didActivate?(self)
-        sortAscending.toggle()
-        UserDefaults.standard.set(sortAscending, forKey: "\(storageKey)-SortAscending")
-        updateSortDirectionButton()
-        applyDisplayOptions()
+        updateSorting(option: sortOption, ascending: !sortAscending)
     }
 
     @objc private func toggleHiddenFiles() {
@@ -937,6 +1173,11 @@ final class PaneViewController: NSViewController {
         showHiddenFiles.toggle()
         UserDefaults.standard.set(showHiddenFiles, forKey: "\(storageKey)-ShowHiddenFiles")
         updateHiddenFilesButton()
+        fileTableController.setDisplayOptions(
+            sortOption: sortOption,
+            ascending: sortAscending,
+            showHiddenFiles: showHiddenFiles
+        )
         reloadItems()
     }
 
@@ -1009,6 +1250,11 @@ final class PaneViewController: NSViewController {
             sortedBy: sortOption,
             ascending: sortAscending
         )
+        fileTableController.setDisplayOptions(
+            sortOption: sortOption,
+            ascending: sortAscending,
+            showHiddenFiles: showHiddenFiles
+        )
         fileTableController.reload(items: displayedItems, currentDirectory: currentDirectory)
         if OperationStatusCenter.shared.isBusy {
             statusLabel.stringValue = "正在處理檔案…"
@@ -1027,6 +1273,22 @@ final class PaneViewController: NSViewController {
             accessibilityDescription: description
         )
         sortDirectionButton.toolTip = description
+    }
+
+    private func updateSorting(option: FileSortOption, ascending: Bool) {
+        sortOption = option
+        sortAscending = ascending
+        sortPopUp.selectItem(at: option.rawValue)
+        UserDefaults.standard.set(option.rawValue, forKey: "\(storageKey)-SortOption")
+        UserDefaults.standard.set(ascending, forKey: "\(storageKey)-SortAscending")
+        updateSortDirectionButton()
+        applyDisplayOptions()
+    }
+
+    private func changeViewMode(to mode: FileViewMode) {
+        viewModeControl.selectedSegment = mode.rawValue
+        fileTableController.setViewMode(mode)
+        UserDefaults.standard.set(mode.rawValue, forKey: "\(storageKey)-ViewMode")
     }
 
     private func updateFavoriteButton() {
@@ -1097,8 +1359,72 @@ final class PaneViewController: NSViewController {
         return button
     }
 
+    private func labeledControl(title: String, control: NSView) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        label.widthAnchor.constraint(equalToConstant: 70).isActive = true
+        control.widthAnchor.constraint(greaterThanOrEqualToConstant: 170).isActive = true
+        let row = NSStackView(views: [label, control])
+        row.orientation = .horizontal
+        row.spacing = 10
+        return row
+    }
+
+    private func aliasDestination(for sourceURL: URL) -> URL {
+        let parent = sourceURL.deletingLastPathComponent()
+        let pathExtension = sourceURL.pathExtension
+        if pathExtension.isEmpty || sourceURL.hasDirectoryPath {
+            return parent.appendingPathComponent("\(sourceURL.lastPathComponent) 的替身")
+        }
+        let name = sourceURL.deletingPathExtension().lastPathComponent
+        return parent
+            .appendingPathComponent("\(name) 的替身")
+            .appendingPathExtension(pathExtension)
+    }
+
     private func isValidFileName(_ name: String) -> Bool {
         !name.isEmpty && !name.contains("/")
+    }
+
+    private func undoFolderWithSelection(
+        folderURL: URL,
+        movedPairs: [(original: URL, insideFolder: URL)]
+    ) {
+        do {
+            guard movedPairs.allSatisfy({
+                !FileManager.default.fileExists(atPath: $0.original.path)
+            }) else {
+                throw FileOperationError.undoDestinationOccupied
+            }
+            for pair in movedPairs {
+                try FileManager.default.moveItem(
+                    at: pair.insideFolder,
+                    to: pair.original
+                )
+            }
+            try FileManager.default.removeItem(at: folderURL)
+            NotificationCenter.default.post(
+                name: .finderV2FileSystemChanged,
+                object: nil
+            )
+        } catch {
+            showMessage(title: "未能還原", message: ErrorMessage.text(for: error))
+        }
+    }
+
+    private func undoCreatedItems(_ urls: [URL]) {
+        do {
+            for url in urls where FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+            NotificationCenter.default.post(
+                name: .finderV2FileSystemChanged,
+                object: nil
+            )
+        } catch {
+            showMessage(title: "未能還原", message: ErrorMessage.text(for: error))
+        }
     }
 
     private func undoNewFolder(at url: URL) {
@@ -1270,6 +1596,69 @@ extension PaneViewController: FileTableViewControllerDelegate {
 
     func fileTableDidRequestReveal(_ controller: FileTableViewController) {
         revealSelectedItemsInFinder()
+    }
+
+    func fileTable(
+        _ controller: FileTableViewController,
+        didRequestSortBy option: FileSortOption,
+        ascending: Bool
+    ) {
+        didActivate?(self)
+        updateSorting(option: option, ascending: ascending)
+    }
+
+    func fileTable(
+        _ controller: FileTableViewController,
+        didRequestViewMode mode: FileViewMode
+    ) {
+        didActivate?(self)
+        changeViewMode(to: mode)
+    }
+
+    func fileTableDidRequestNewFolder(_ controller: FileTableViewController) {
+        createNewFolder()
+    }
+
+    func fileTableDidRequestFolderWithSelection(
+        _ controller: FileTableViewController
+    ) {
+        createFolderWithSelectedItems()
+    }
+
+    func fileTable(
+        _ controller: FileTableViewController,
+        didRequestOpenWith applicationURL: URL
+    ) {
+        openSelectedItems(withApplicationAt: applicationURL)
+    }
+
+    func fileTableDidRequestChooseApplication(
+        _ controller: FileTableViewController
+    ) {
+        chooseApplicationForSelectedItems()
+    }
+
+    func fileTableDidRequestAlias(_ controller: FileTableViewController) {
+        createAliasesForSelection()
+    }
+
+    func fileTableDidRequestShowViewOptions(
+        _ controller: FileTableViewController
+    ) {
+        showViewOptions()
+    }
+
+    func fileTableDidRequestToggleHiddenFiles(
+        _ controller: FileTableViewController
+    ) {
+        toggleHiddenFiles()
+    }
+
+    func fileTable(
+        _ controller: FileTableViewController,
+        didRequestTag tag: FinderTag?
+    ) {
+        applyTag(tag)
     }
 }
 

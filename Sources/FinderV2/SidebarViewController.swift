@@ -19,10 +19,28 @@ final class SidebarViewController: NSViewController {
 
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
+    private let locationProvider: () -> [SidebarLocation]
+    private let workspaceNotificationCenter: NotificationCenter
     private(set) var locations: [SidebarLocation] = []
     private var isUpdatingSelection = false
     private var contextFavoriteIndex: Int?
     private var contextLocationIndex: Int?
+
+    init(
+        locationProvider: @escaping () -> [SidebarLocation] = {
+            SidebarLocationProvider.locations()
+        },
+        workspaceNotificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter
+    ) {
+        self.locationProvider = locationProvider
+        self.workspaceNotificationCenter = workspaceNotificationCenter
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override func loadView() {
         let root = NSView()
@@ -73,9 +91,39 @@ final class SidebarViewController: NSViewController {
         reloadLocations()
     }
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        [
+            NSWorkspace.didMountNotification,
+            NSWorkspace.didUnmountNotification,
+            NSWorkspace.didRenameVolumeNotification
+        ].forEach { name in
+            workspaceNotificationCenter.addObserver(
+                self,
+                selector: #selector(mountedVolumesDidChange),
+                name: name,
+                object: nil
+            )
+        }
+    }
+
+    deinit {
+        workspaceNotificationCenter.removeObserver(self)
+    }
+
     func reloadLocations() {
-        locations = SidebarLocationProvider.locations()
+        let selectedURL: URL?
+        if tableView.selectedRow >= 0, tableView.selectedRow < locations.count {
+            selectedURL = locations[tableView.selectedRow].url
+        } else {
+            selectedURL = nil
+        }
+
+        locations = locationProvider()
         tableView.reloadData()
+        if let selectedURL {
+            selectLocation(matching: selectedURL)
+        }
     }
 
     func selectLocation(matching url: URL) {
@@ -93,6 +141,16 @@ final class SidebarViewController: NSViewController {
 
     private func dragOperation() -> FileTransferOperation {
         NSEvent.modifierFlags.contains(.option) ? .copy : .move
+    }
+
+    @objc private func mountedVolumesDidChange(_ notification: Notification) {
+        if Thread.isMainThread {
+            reloadLocations()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.reloadLocations()
+            }
+        }
     }
 
     private func draggedURLs(from draggingInfo: NSDraggingInfo) -> [URL] {
