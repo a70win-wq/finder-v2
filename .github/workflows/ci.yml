@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: swift test --scratch-path "$RUNNER_TEMP/finderv2-tests"
+      - name: Build universal app
+        run: ./scripts/build-app.sh
+      - name: Verify architectures
+        run: lipo -archs "build/Finder v2.0.app/Contents/MacOS/FinderV2"

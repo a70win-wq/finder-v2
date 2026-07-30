@@ -1,0 +1,7 @@
+.build/
+build/
+dist/
+.DS_Store
+*.dmg
+Resources/AppIcon-master.png
+Resources/AppIcon-source.png
