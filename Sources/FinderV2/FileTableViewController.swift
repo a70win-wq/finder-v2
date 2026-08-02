@@ -1203,7 +1203,7 @@ final class FileTableViewController: NSViewController {
 
         cell.representedFileURL = item.url.standardizedFileURL
         cell.textField?.stringValue = item.name
-        switch comparisonStates[item.name.lowercased()] {
+        switch comparisonStates[item.name] {
         case .onlyHere:
             cell.textField?.textColor = .systemBlue
             cell.textField?.toolTip = "只在呢邊"
