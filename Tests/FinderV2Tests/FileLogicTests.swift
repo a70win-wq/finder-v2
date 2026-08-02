@@ -73,6 +73,32 @@ struct FileLogicTests {
         }
     }
 
+    @Test("大小寫不同的檔名會分開比較及同步")
+    func folderComparisonRespectsFileNameCase() {
+        let leftItem = FileItem(
+            url: URL(fileURLWithPath: "/tmp/FinderV2-left/Report.txt"),
+            isDirectory: false,
+            isPackage: false,
+            fileSize: 10,
+            modifiedDate: Date(timeIntervalSince1970: 500),
+            kind: "文稿"
+        )
+        let rightItem = FileItem(
+            url: URL(fileURLWithPath: "/tmp/FinderV2-right/report.txt"),
+            isDirectory: false,
+            isPackage: false,
+            fileSize: 10,
+            modifiedDate: Date(timeIntervalSince1970: 500),
+            kind: "文稿"
+        )
+
+        let result = FolderComparisonEngine.compare(left: [leftItem], right: [rightItem])
+
+        #expect(result.left["Report.txt"] == .onlyHere)
+        #expect(result.right["report.txt"] == .onlyHere)
+        #expect(FolderComparisonEngine.syncSources(from: [leftItem], to: [rightItem]) == [leftItem.url])
+    }
+
     @Test("批量改名會保留副檔名")
     func batchRenameKeepsExtensions() throws {
         try withTemporaryDirectory { temporaryDirectory in

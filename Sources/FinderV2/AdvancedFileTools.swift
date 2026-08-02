@@ -18,8 +18,9 @@ struct FolderComparisonResult {
 
 enum FolderComparisonEngine {
     static func compare(left: [FileItem], right: [FileItem]) -> FolderComparisonResult {
-        let leftMap = Dictionary(uniqueKeysWithValues: left.map { ($0.name.lowercased(), $0) })
-        let rightMap = Dictionary(uniqueKeysWithValues: right.map { ($0.name.lowercased(), $0) })
+        // 保留原本檔名大小寫，避免大小寫敏感磁碟上將兩個檔案當成同一個。
+        let leftMap = Dictionary(uniqueKeysWithValues: left.map { ($0.name, $0) })
+        let rightMap = Dictionary(uniqueKeysWithValues: right.map { ($0.name, $0) })
         let names = Set(leftMap.keys).union(rightMap.keys)
         var leftStates: [String: FolderComparisonState] = [:]
         var rightStates: [String: FolderComparisonState] = [:]
@@ -47,9 +48,9 @@ enum FolderComparisonEngine {
     }
 
     static func syncSources(from source: [FileItem], to destination: [FileItem]) -> [URL] {
-        let destinationMap = Dictionary(uniqueKeysWithValues: destination.map { ($0.name.lowercased(), $0) })
+        let destinationMap = Dictionary(uniqueKeysWithValues: destination.map { ($0.name, $0) })
         return source.compactMap { item in
-            guard let existing = destinationMap[item.name.lowercased()] else {
+            guard let existing = destinationMap[item.name] else {
                 return item.url
             }
             guard item.isDirectory == existing.isDirectory else { return item.url }

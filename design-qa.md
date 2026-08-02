@@ -48,14 +48,18 @@ Its content area was cropped to 1800 × 1050.5 points and scaled to the final
 - Selected-file and blank-area context menus: passed.
 - Layout switching and divider dragging: passed.
 - External disk mount and unmount without restarting the app: passed.
-- Full automated suite: 31 of 31 tests passed.
+- Sync button, work list and undo on temporary folders: passed.
+- Native drag-and-drop between panes: not verified in this run; the desktop
+  mouse simulator did not trigger the app's drag session.
+- Full automated suite: 41 of 41 tests passed.
 
 ## Comparison history
 
 The earlier build showed uneven pane sizing after some layout changes and had a
 short context menu. The final build adds ratio-aware pane sizing, complete native
 menus, live volume updates and clickable list headers. No remaining P0, P1 or P2
-visual mismatches were found.
+visual mismatches were found. Real Google Drive, iCloud File Provider and
+physical drag-and-drop still need a direct user-device check.
 
 ## Intentional difference
 

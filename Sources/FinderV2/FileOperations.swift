@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 enum FileTransferOperation {
     case move
@@ -188,7 +189,96 @@ private struct CompletedTransfer {
     let replacedItemInTrash: URL?
 }
 
+struct FileSystemIdentity: Equatable {
+    let device: UInt64
+    let inode: UInt64
+
+    static func read(from url: URL) -> FileSystemIdentity? {
+        var information = stat()
+        let result = url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return lstat(path, &information)
+        }
+        guard result == 0 else { return nil }
+        return FileSystemIdentity(
+            device: UInt64(information.st_dev),
+            inode: UInt64(information.st_ino)
+        )
+    }
+}
+
+enum DirectoryUseInspector {
+    static func processNameUsingDirectory(_ directory: URL) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        process.arguments = ["-F", "pcn", "+d", directory.path]
+
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        return processName(
+            fromLsofOutput: text,
+            matchingPath: directory.path,
+            excludingPID: ProcessInfo.processInfo.processIdentifier
+        )
+    }
+
+    static func processName(
+        fromLsofOutput output: String,
+        matchingPath path: String,
+        excludingPID: Int32
+    ) -> String? {
+        var currentPID: Int32?
+        var currentCommand = ""
+
+        for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let field = line.first else { continue }
+            let value = String(line.dropFirst())
+            switch field {
+            case "p":
+                currentPID = Int32(value)
+                currentCommand = ""
+            case "c":
+                currentCommand = value
+            case "n":
+                guard value == path,
+                      currentPID != excludingPID,
+                      !currentCommand.isEmpty else {
+                    continue
+                }
+                let lowercased = currentCommand.lowercased()
+                if lowercased == "node"
+                    || lowercased == "npm"
+                    || lowercased == "vite"
+                    || lowercased == "esbuild" {
+                    return "網站預覽程式"
+                }
+                return currentCommand
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+}
+
 enum FileActionEngine {
+    private struct CoordinatedMoveResult {
+        let source: URL
+        let destination: URL
+        let sourceIdentity: FileSystemIdentity?
+    }
+
     static func transfer(
         source: URL,
         destination: URL,
@@ -196,8 +286,21 @@ enum FileActionEngine {
         replaceExisting: Bool,
         fileManager: FileManager = .default,
         progress: ((Int64) -> Void)? = nil,
-        isCancelled: (() -> Bool)? = nil
+        isCancelled: (() -> Bool)? = nil,
+        directoryUseCheck: (URL) -> String? = DirectoryUseInspector.processNameUsingDirectory
     ) throws -> URL? {
+        var sourceIsDirectory: ObjCBool = false
+        let sourceWasDirectory = fileManager.fileExists(
+            atPath: source.path,
+            isDirectory: &sourceIsDirectory
+        ) && sourceIsDirectory.boolValue
+
+        if case .move = operation,
+           sourceWasDirectory,
+           let processName = directoryUseCheck(source) {
+            throw FileOperationError.folderInUse(processName)
+        }
+
         var trashedExistingNSURL: NSURL?
         if replaceExisting, fileManager.fileExists(atPath: destination.path) {
             try fileManager.trashItem(
@@ -212,7 +315,19 @@ enum FileActionEngine {
             }
             switch operation {
             case .move:
-                try fileManager.moveItem(at: source, to: destination)
+                let moveResult = try coordinatedMove(
+                    source: source,
+                    destination: destination,
+                    fileManager: fileManager
+                )
+
+                try verifyCompletedMove(
+                    source: moveResult.source,
+                    destination: moveResult.destination,
+                    originalSourceIdentity: moveResult.sourceIdentity,
+                    sourceWasDirectory: sourceWasDirectory,
+                    fileManager: fileManager
+                )
             case .copy:
                 let values = try? source.resourceValues(forKeys: [.isRegularFileKey])
                 if values?.isRegularFile == true, progress != nil || isCancelled != nil {
@@ -229,12 +344,169 @@ enum FileActionEngine {
             }
             return trashedExistingNSURL as URL?
         } catch {
-            if let trashedExistingURL = trashedExistingNSURL as URL?,
-               !fileManager.fileExists(atPath: destination.path) {
-                try? fileManager.moveItem(at: trashedExistingURL, to: destination)
+            if let trashedExistingURL = trashedExistingNSURL as URL? {
+                do {
+                    if fileManager.fileExists(atPath: destination.path) {
+                        var ignoredPartialURL: NSURL?
+                        try fileManager.trashItem(
+                            at: destination,
+                            resultingItemURL: &ignoredPartialURL
+                        )
+                    }
+                    guard !fileManager.fileExists(atPath: destination.path) else {
+                        throw FileOperationError.replacementRecoveryFailed
+                    }
+                    try fileManager.moveItem(
+                        at: trashedExistingURL,
+                        to: destination
+                    )
+                } catch {
+                    throw FileOperationError.replacementRecoveryFailed
+                }
             }
             throw error
         }
+    }
+
+    private static func coordinatedMove(
+        source: URL,
+        destination: URL,
+        fileManager: FileManager
+    ) throws -> CoordinatedMoveResult {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        var coordinationError: NSError?
+        var moveError: Error?
+        var result: CoordinatedMoveResult?
+
+        coordinator.coordinate(
+            writingItemAt: source,
+            options: .forMoving,
+            writingItemAt: destination,
+            options: .forReplacing,
+            error: &coordinationError
+        ) { coordinatedSource, coordinatedDestination in
+            let sourceIdentity = FileSystemIdentity.read(from: coordinatedSource)
+            coordinator.item(
+                at: coordinatedSource,
+                willMoveTo: coordinatedDestination
+            )
+            defer {
+                // File presenters need the matching completion callback even
+                // when FileManager fails part-way through the move.
+                coordinator.item(
+                    at: coordinatedSource,
+                    didMoveTo: coordinatedDestination
+                )
+            }
+            do {
+                try fileManager.moveItem(
+                    at: coordinatedSource,
+                    to: coordinatedDestination
+                )
+                result = CoordinatedMoveResult(
+                    source: coordinatedSource,
+                    destination: coordinatedDestination,
+                    sourceIdentity: sourceIdentity
+                )
+            } catch {
+                moveError = error
+            }
+        }
+
+        if let coordinationError {
+            throw coordinationError
+        }
+        if let moveError {
+            throw moveError
+        }
+        guard let result else {
+            throw FileOperationError.moveDestinationMissing
+        }
+        return result
+    }
+
+    private static func verifyCompletedMove(
+        source: URL,
+        destination: URL,
+        originalSourceIdentity: FileSystemIdentity?,
+        sourceWasDirectory: Bool,
+        fileManager: FileManager
+    ) throws {
+        guard fileManager.fileExists(atPath: destination.path) else {
+            throw FileOperationError.moveDestinationMissing
+        }
+        guard fileManager.fileExists(atPath: source.path) else {
+            return
+        }
+
+        guard sourceWasDirectory, let originalSourceIdentity else {
+            throw FileOperationError.moveSourceNotRemoved
+        }
+
+        let quarantine = source.deletingLastPathComponent()
+            .appendingPathComponent(
+                ".FinderV2-MoveCheck-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        guard renameAtomically(from: source, to: quarantine) else {
+            throw FileOperationError.moveSourceNotRemoved
+        }
+
+        let quarantinedIdentity = FileSystemIdentity.read(from: quarantine)
+        guard quarantinedIdentity == originalSourceIdentity else {
+            try restoreQuarantinedSource(
+                quarantine,
+                to: source,
+                fileManager: fileManager
+            )
+            throw FileOperationError.moveSourceRecreated
+        }
+
+        let removalResult = quarantine.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return Darwin.rmdir(path)
+        }
+        guard removalResult == 0 else {
+            try restoreQuarantinedSource(
+                quarantine,
+                to: source,
+                fileManager: fileManager
+            )
+            throw FileOperationError.moveSourceNotRemoved
+        }
+    }
+
+    private static func renameAtomically(from source: URL, to destination: URL) -> Bool {
+        source.withUnsafeFileSystemRepresentation { sourcePath in
+            destination.withUnsafeFileSystemRepresentation { destinationPath in
+                guard let sourcePath, let destinationPath else { return false }
+                return Darwin.rename(sourcePath, destinationPath) == 0
+            }
+        }
+    }
+
+    private static func restoreQuarantinedSource(
+        _ quarantine: URL,
+        to originalURL: URL,
+        fileManager: FileManager
+    ) throws {
+        if !fileManager.fileExists(atPath: originalURL.path),
+           renameAtomically(from: quarantine, to: originalURL) {
+            return
+        }
+
+        let recoveryURL = FileTransferCoordinator.availableURL(
+            for: originalURL.deletingLastPathComponent()
+                .appendingPathComponent(
+                    "\(originalURL.lastPathComponent)（搬移保留）",
+                    isDirectory: true
+                ),
+            fileManager: fileManager
+        )
+        guard renameAtomically(from: quarantine, to: recoveryURL) else {
+            throw FileOperationError.moveSourceRecoveryFailed
+        }
+        throw FileOperationError.moveSourceRecovered(recoveryURL.lastPathComponent)
     }
 
     private static func copyRegularFile(
@@ -469,7 +741,16 @@ final class FileTransferCoordinator: NSObject {
                     guard !fileManager.fileExists(atPath: transfer.source.path) else {
                         throw FileOperationError.undoDestinationOccupied
                     }
-                    try fileManager.moveItem(at: transfer.destination, to: transfer.source)
+                    guard fileManager.fileExists(atPath: transfer.destination.path) else {
+                        throw FileOperationError.undoSourceMissing
+                    }
+                    _ = try FileActionEngine.transfer(
+                        source: transfer.destination,
+                        destination: transfer.source,
+                        operation: .move,
+                        replaceExisting: false,
+                        fileManager: fileManager
+                    )
                 case .copy:
                     var ignored: NSURL?
                     try fileManager.trashItem(at: transfer.destination, resultingItemURL: &ignored)
@@ -528,7 +809,24 @@ final class FileTransferCoordinator: NSObject {
         if extraCount > 0 {
             message += "\n另外有 \(extraCount) 個項目未能完成。"
         }
-        presentMessage(title: "做唔到呢個操作", message: message)
+        let title: String
+        if let fileError = error as? FileOperationError {
+            switch fileError {
+            case .folderInUse:
+                title = "資料夾使用中"
+            case .moveSourceRecreated:
+                title = "舊資料夾再次出現"
+            case .moveSourceNotRemoved:
+                title = "搬移未完全完成"
+            case .moveSourceRecovered, .moveSourceRecoveryFailed, .replacementRecoveryFailed:
+                title = "檔案已安全保留"
+            default:
+                title = "做唔到呢個操作"
+            }
+        } else {
+            title = "做唔到呢個操作"
+        }
+        presentMessage(title: title, message: message)
     }
 
     private func presentMessage(title: String, message: String) {
@@ -543,17 +841,41 @@ final class FileTransferCoordinator: NSObject {
 
 enum FileOperationError: LocalizedError {
     case undoDestinationOccupied
+    case undoSourceMissing
     case folderNotEmpty
     case cancelled
+    case moveDestinationMissing
+    case moveSourceNotRemoved
+    case moveSourceRecreated
+    case folderInUse(String)
+    case moveSourceRecovered(String)
+    case moveSourceRecoveryFailed
+    case replacementRecoveryFailed
 
     var errorDescription: String? {
         switch self {
         case .undoDestinationOccupied:
             return "原本位置而家已有同名檔案，所以未能還原。"
+        case .undoSourceMissing:
+            return "搬移後嘅檔案已經搵唔到，所以未能還原。請先檢查新位置。"
         case .folderNotEmpty:
             return "資料夾入面已有檔案，為免刪錯，所以未能還原。"
         case .cancelled:
             return "操作已取消。"
+        case .moveDestinationMissing:
+            return "搬移未完成，新位置搵唔到檔案。請檢查原本位置同新位置。"
+        case .moveSourceNotRemoved:
+            return "新位置已有檔案，但舊位置仲有內容。為免刪錯，舊資料夾已保留，請檢查兩邊。"
+        case .moveSourceRecreated:
+            return "檔案已搬到新位置，但有程式仲用緊舊資料夾，並喺舊位置重新整咗檔案。請先關閉相關程式，再檢查舊資料夾。"
+        case let .folderInUse(processName):
+            return "「\(processName)」仲用緊呢個資料夾。請先關閉佢，再搬一次。"
+        case let .moveSourceRecovered(name):
+            return "為免刪錯，舊資料已安全保留為「\(name)」。請檢查新舊兩邊。"
+        case .moveSourceRecoveryFailed:
+            return "為免刪錯，舊資料已保留，但未能放回原名。請重新整理後檢查新舊兩邊。"
+        case .replacementRecoveryFailed:
+            return "新舊檔案都有安全保留，但未能自動放回原位。請打開垃圾桶及目標資料夾檢查。"
         }
     }
 }
