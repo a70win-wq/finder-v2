@@ -307,6 +307,19 @@ private final class FinderBrowser: NSBrowser {
     }
 }
 
+private final class FinderBrowserCell: NSBrowserCell {
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        var titleRect = super.titleRect(forBounds: rect)
+        let cellFont = self.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let lineHeight = ceil(cellFont.ascender - cellFont.descender)
+        guard lineHeight > 0 else { return titleRect }
+
+        titleRect.size.height = min(titleRect.height, lineHeight)
+        titleRect.origin.y = rect.midY - titleRect.height / 2
+        return titleRect
+    }
+}
+
 protocol FileTableViewControllerDelegate: AnyObject {
     func fileTableDidActivate(_ controller: FileTableViewController)
     func fileTable(_ controller: FileTableViewController, didOpen item: FileItem)
@@ -535,6 +548,7 @@ final class FileTableViewController: NSViewController {
         root.addSubview(iconScrollView)
 
         browser.delegate = self
+        browser.cellPrototype = FinderBrowserCell(textCell: "")
         browser.target = self
         browser.action = #selector(browserSelectionChanged)
         browser.doubleAction = #selector(openBrowserSelection)
@@ -1445,6 +1459,10 @@ extension FileTableViewController: NSBrowserDelegate {
               let url = (sender.item(atRow: row, inColumn: column) as? NSURL) as URL? else {
             return
         }
+        browserCell.font = .systemFont(ofSize: 13)
+        browserCell.alignment = .left
+        browserCell.usesSingleLineMode = true
+        browserCell.lineBreakMode = .byTruncatingTail
         browserCell.image = NSWorkspace.shared.icon(forFile: url.path)
         browserCell.isLeaf = !(FileItem.loadItem(at: url)?.shouldOpenAsFolder == true)
     }
