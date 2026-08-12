@@ -2,6 +2,24 @@ import AppKit
 import Quartz
 import UniformTypeIdentifiers
 
+private final class FinderPathControl: NSPathControl {
+    var makeContextMenu: ((URL) -> NSMenu?)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let pathCell = cell as? NSPathCell,
+              let component = pathCell.pathComponentCell(
+                  at: point,
+                  withFrame: bounds,
+                  in: self
+              ),
+              let url = component.url else {
+            return nil
+        }
+        return makeContextMenu?(url)
+    }
+}
+
 final class PaneViewController: NSViewController {
     let storageKey: String
     var didActivate: ((PaneViewController) -> Void)?
@@ -9,7 +27,7 @@ final class PaneViewController: NSViewController {
     private let initialURL: URL
     private let sidebarController = SidebarViewController()
     private let fileTableController = FileTableViewController()
-    private let pathControl = NSPathControl()
+    private let pathControl = FinderPathControl()
     private let backButton = NSButton()
     private let forwardButton = NSButton()
     private let upButton = NSButton()
@@ -108,6 +126,9 @@ final class PaneViewController: NSViewController {
         pathControl.font = .systemFont(ofSize: 12, weight: .medium)
         pathControl.target = self
         pathControl.action = #selector(pathControlClicked)
+        pathControl.makeContextMenu = { [weak self] url in
+            self?.makePathContextMenu(for: url)
+        }
         pathControl.setContentCompressionResistancePriority(
             NSLayoutConstraint.Priority(1),
             for: .horizontal
@@ -753,6 +774,101 @@ final class PaneViewController: NSViewController {
         guard !paths.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
+    }
+
+    func pathContextMenuTitlesForTesting() -> [String] {
+        makePathContextMenu(for: currentDirectory).items.map { item in
+            item.isSeparatorItem ? "—" : item.title
+        }
+    }
+
+    private func makePathContextMenu(for url: URL) -> NSMenu {
+        let folderName = FileManager.default.displayName(atPath: url.path)
+        let menu = NSMenu(title: folderName)
+
+        addPathMenuItem(
+            to: menu,
+            title: "拷貝「\(folderName)」",
+            action: #selector(copyPathItem),
+            representedObject: url
+        )
+        addPathMenuItem(
+            to: menu,
+            title: "複製路徑",
+            action: #selector(copyPathItemText),
+            representedObject: url
+        )
+        addPathMenuItem(
+            to: menu,
+            title: "在 Apple Finder 顯示",
+            action: #selector(revealPathItem),
+            representedObject: url
+        )
+        menu.addItem(.separator())
+        addPathMenuItem(
+            to: menu,
+            title: "取得資料",
+            action: #selector(showPathItemInfo),
+            representedObject: url
+        )
+        return menu
+    }
+
+    private func addPathMenuItem(
+        to menu: NSMenu,
+        title: String,
+        action: Selector,
+        representedObject: URL
+    ) {
+        let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+        item.target = self
+        item.representedObject = representedObject
+    }
+
+    @objc private func copyPathItem(_ sender: NSMenuItem) {
+        didActivate?(self)
+        guard let url = sender.representedObject as? URL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([url as NSURL])
+    }
+
+    @objc private func copyPathItemText(_ sender: NSMenuItem) {
+        didActivate?(self)
+        guard let url = sender.representedObject as? URL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.path, forType: .string)
+    }
+
+    @objc private func revealPathItem(_ sender: NSMenuItem) {
+        didActivate?(self)
+        guard let url = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @objc private func showPathItemInfo(_ sender: NSMenuItem) {
+        didActivate?(self)
+        guard let url = sender.representedObject as? URL else { return }
+        let values = try? url.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .fileSizeKey,
+            .contentModificationDateKey
+        ])
+        let size = values?.fileSize.map {
+            FileFormatting.byteFormatter.string(fromByteCount: Int64($0))
+        } ?? "—"
+        let modified = values?.contentModificationDate.map {
+            FileFormatting.date($0)
+        } ?? "—"
+        let alert = NSAlert()
+        alert.messageText = FileManager.default.displayName(atPath: url.path)
+        alert.informativeText = [
+            "種類：資料夾",
+            "大小：\(size)",
+            "修改日期：\(modified)",
+            "位置：\(url.deletingLastPathComponent().path)"
+        ].joined(separator: "\n")
+        alert.addButton(withTitle: "知道")
+        alert.runModal()
     }
 
     func revealSelectedItemsInFinder() {

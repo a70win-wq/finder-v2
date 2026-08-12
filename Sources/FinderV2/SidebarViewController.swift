@@ -23,6 +23,7 @@ final class SidebarViewController: NSViewController {
     private let workspaceNotificationCenter: NotificationCenter
     private(set) var locations: [SidebarLocation] = []
     private var isUpdatingSelection = false
+    private var isPreparingContextMenu = false
     private var contextFavoriteIndex: Int?
     private var contextLocationIndex: Int?
 
@@ -232,6 +233,87 @@ final class SidebarViewController: NSViewController {
         ejectLocation(at: index)
     }
 
+    func contextMenuTitlesForTesting(at row: Int) -> [String] {
+        let menu = NSMenu()
+        buildContextMenu(menu, for: row)
+        return menu.items.map { item in
+            item.isSeparatorItem ? "—" : item.title
+        }
+    }
+
+    @objc private func openContextLocation() {
+        guard let location = contextLocation() else { return }
+        delegate?.sidebar(self, didChoose: location)
+    }
+
+    @objc private func copyContextLocation() {
+        guard let location = contextLocation() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([location.url as NSURL])
+    }
+
+    @objc private func copyContextLocationPath() {
+        guard let location = contextLocation() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(location.url.path, forType: .string)
+    }
+
+    @objc private func revealContextLocation() {
+        guard let location = contextLocation() else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([location.url])
+    }
+
+    @objc private func showContextLocationInfo() {
+        guard let location = contextLocation() else { return }
+        let values = try? location.url.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .fileSizeKey,
+            .contentModificationDateKey
+        ])
+        let size = values?.fileSize.map {
+            ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file)
+        } ?? "—"
+        let modified = values?.contentModificationDate.map {
+            DateFormatter.localizedString(from: $0, dateStyle: .short, timeStyle: .short)
+        } ?? "—"
+        let alert = NSAlert()
+        alert.messageText = location.title
+        alert.informativeText = [
+            "種類：資料夾",
+            "大小：\(size)",
+            "修改日期：\(modified)",
+            "位置：\(location.url.deletingLastPathComponent().path)"
+        ].joined(separator: "\n")
+        alert.addButton(withTitle: "知道")
+        alert.runModal()
+    }
+
+    @objc private func addContextLocationToFavorites() {
+        guard let location = contextLocation(), !location.isFavorite else { return }
+        FavoriteStore.shared.add(location.url)
+        reloadLocations()
+    }
+
+    private func prepareContextMenuSelection(at row: Int) {
+        guard row >= 0,
+              row < locations.count,
+              !tableView.selectedRowIndexes.contains(row) else {
+            return
+        }
+        isPreparingContextMenu = true
+        defer { isPreparingContextMenu = false }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+    }
+
+    private func contextLocation() -> SidebarLocation? {
+        guard let index = contextLocationIndex,
+              index >= 0,
+              index < locations.count else {
+            return nil
+        }
+        return locations[index]
+    }
+
     private func moveContextFavorite(offset: Int) {
         guard let index = contextFavoriteIndex,
               index >= 0,
@@ -334,7 +416,7 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard !isUpdatingSelection else { return }
+        guard !isUpdatingSelection, !isPreparingContextMenu else { return }
         let row = tableView.selectedRow
         guard row >= 0, row < locations.count else { return }
         delegate?.sidebar(self, didChoose: locations[row])
@@ -391,54 +473,93 @@ extension SidebarViewController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = tableView.clickedRow
+        prepareContextMenuSelection(at: row)
+        buildContextMenu(menu, for: row)
+    }
+
+    private func buildContextMenu(_ menu: NSMenu, for row: Int) {
         guard row >= 0, row < locations.count else {
             contextFavoriteIndex = nil
             contextLocationIndex = nil
             return
         }
         contextLocationIndex = row
+        let location = locations[row]
+        contextFavoriteIndex = location.isFavorite ? row : nil
 
-        if locations[row].isExternalVolume {
-            contextFavoriteIndex = nil
-            let eject = menu.addItem(
-                withTitle: "退出 \(locations[row].title)",
-                action: #selector(ejectContextVolume),
-                keyEquivalent: ""
-            )
-            eject.target = self
-            return
-        }
-
-        guard locations[row].isFavorite else {
-            contextFavoriteIndex = nil
-            return
-        }
-
-        contextFavoriteIndex = row
-        let edit = menu.addItem(
-            withTitle: "改名稱及分組…",
-            action: #selector(editFavorite),
-            keyEquivalent: ""
+        addContextMenuItem(
+            to: menu,
+            title: "開啟",
+            action: #selector(openContextLocation)
         )
-        edit.target = self
-        let up = menu.addItem(
-            withTitle: "向上移",
-            action: #selector(moveFavoriteUp),
-            keyEquivalent: ""
+        addContextMenuItem(
+            to: menu,
+            title: "在 Apple Finder 顯示",
+            action: #selector(revealContextLocation)
         )
-        up.target = self
-        let down = menu.addItem(
-            withTitle: "向下移",
-            action: #selector(moveFavoriteDown),
-            keyEquivalent: ""
+        addContextMenuItem(
+            to: menu,
+            title: "拷貝「\(location.title)」",
+            action: #selector(copyContextLocation)
         )
-        down.target = self
+        addContextMenuItem(
+            to: menu,
+            title: "複製路徑",
+            action: #selector(copyContextLocationPath)
+        )
         menu.addItem(.separator())
-        let remove = menu.addItem(
-            withTitle: "移除收藏",
-            action: #selector(removeFavorite),
-            keyEquivalent: ""
+        addContextMenuItem(
+            to: menu,
+            title: "取得資料",
+            action: #selector(showContextLocationInfo)
         )
-        remove.target = self
+
+        if location.isFavorite {
+            menu.addItem(.separator())
+            addContextMenuItem(
+                to: menu,
+                title: "改名稱及分組…",
+                action: #selector(editFavorite)
+            )
+            addContextMenuItem(
+                to: menu,
+                title: "向上移",
+                action: #selector(moveFavoriteUp)
+            )
+            addContextMenuItem(
+                to: menu,
+                title: "向下移",
+                action: #selector(moveFavoriteDown)
+            )
+            addContextMenuItem(
+                to: menu,
+                title: "移除收藏",
+                action: #selector(removeFavorite)
+            )
+        } else {
+            addContextMenuItem(
+                to: menu,
+                title: "加入收藏",
+                action: #selector(addContextLocationToFavorites)
+            )
+        }
+
+        if location.isExternalVolume {
+            menu.addItem(.separator())
+            addContextMenuItem(
+                to: menu,
+                title: "退出 \(location.title)",
+                action: #selector(ejectContextVolume)
+            )
+        }
+    }
+
+    private func addContextMenuItem(
+        to menu: NSMenu,
+        title: String,
+        action: Selector
+    ) {
+        let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+        item.target = self
     }
 }

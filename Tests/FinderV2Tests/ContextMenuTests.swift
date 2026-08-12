@@ -110,6 +110,47 @@ struct ContextMenuTests {
         #expect(enabledPlan.items[1].isEnabled)
     }
 
+    @Test("側邊欄右鍵顯示開啟、拷貝、路徑及資料選項")
+    @MainActor
+    func sidebarContextMenuTitles() {
+        let directory = FileManager.default.temporaryDirectory
+        let controller = SidebarViewController(
+            locationProvider: {
+                [SidebarLocation(
+                    title: "測試資料夾",
+                    url: directory,
+                    symbolName: "folder"
+                )]
+            }
+        )
+        _ = controller.view
+
+        #expect(controller.contextMenuTitlesForTesting(at: 0) == [
+            "開啟",
+            "在 Apple Finder 顯示",
+            "拷貝「測試資料夾」",
+            "複製路徑",
+            "—",
+            "取得資料",
+            "加入收藏"
+        ])
+    }
+
+    @Test("路徑列右鍵提供拷貝資料夾及複製路徑")
+    @MainActor
+    func pathContextMenuTitles() {
+        let controller = PaneViewController(
+            storageKey: "ContextMenuPathTest",
+            initialURL: FileManager.default.temporaryDirectory
+        )
+        _ = controller.view
+
+        let titles = controller.pathContextMenuTitlesForTesting()
+        #expect(titles.contains("複製路徑"))
+        #expect(titles.contains { $0.hasPrefix("拷貝「") })
+        #expect(titles.contains("取得資料"))
+    }
+
     @Test("右鍵新項目只揀該項，右鍵多選內項目會保留多選")
     @MainActor
     func contextClickSelectionSafety() {
