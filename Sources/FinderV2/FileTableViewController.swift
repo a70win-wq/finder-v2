@@ -543,6 +543,7 @@ final class FileTableViewController: NSViewController {
         browser.allowsBranchSelection = true
         browser.hasHorizontalScroller = true
         browser.autohidesScroller = true
+        browser.registerForDraggedTypes([.fileURL])
         browser.separatesColumns = true
         browser.minColumnWidth = 180
         browser.maxVisibleColumns = 4
@@ -1453,6 +1454,90 @@ extension FileTableViewController: NSBrowserDelegate {
             return currentDirectory?.lastPathComponent
         }
         return FileManager.default.displayName(atPath: parent.path)
+    }
+
+    func browser(
+        _ browser: NSBrowser,
+        validateDrop info: NSDraggingInfo,
+        proposedRow row: UnsafeMutablePointer<Int>,
+        column: UnsafeMutablePointer<Int>,
+        dropOperation: UnsafeMutablePointer<NSBrowser.DropOperation>
+    ) -> NSDragOperation {
+        guard !draggedURLs(from: info).isEmpty,
+              browserDropDestination(
+                  in: browser,
+                  row: row.pointee,
+                  column: column.pointee,
+                  dropOperation: dropOperation.pointee
+              ) != nil else {
+            return []
+        }
+
+        if browserItem(atRow: row.pointee, column: column.pointee)?.shouldOpenAsFolder == true,
+           dropOperation.pointee == .on {
+            // Drop onto a folder row.
+            return dragOperation() == .copy ? .copy : .move
+        }
+
+        // A blank area or a non-folder row means the directory represented by
+        // this column, matching the list/icon view behaviour.
+        row.pointee = -1
+        dropOperation.pointee = .on
+        return dragOperation() == .copy ? .copy : .move
+    }
+
+    func browser(
+        _ browser: NSBrowser,
+        acceptDrop info: NSDraggingInfo,
+        atRow row: Int,
+        column: Int,
+        dropOperation: NSBrowser.DropOperation
+    ) -> Bool {
+        guard let destination = browserDropDestination(
+            in: browser,
+            row: row,
+            column: column,
+            dropOperation: dropOperation
+        ) else {
+            return false
+        }
+
+        let urls = draggedURLs(from: info)
+        guard !urls.isEmpty else { return false }
+        delegate?.fileTable(
+            self,
+            didReceive: urls,
+            at: destination,
+            operation: dragOperation()
+        )
+        return true
+    }
+
+    private func browserItem(atRow row: Int, column: Int) -> FileItem? {
+        guard row >= 0, column >= 0,
+              let url = (browser.item(atRow: row, inColumn: column) as? NSURL) as URL? else {
+            return nil
+        }
+        return FileItem.loadItem(at: url)
+    }
+
+    private func browserDropDestination(
+        in browser: NSBrowser,
+        row: Int,
+        column: Int,
+        dropOperation: NSBrowser.DropOperation
+    ) -> URL? {
+        guard column >= 0 else { return nil }
+
+        if row >= 0,
+           dropOperation == .on,
+           let url = (browser.item(atRow: row, inColumn: column) as? NSURL) as URL?,
+           FileItem.loadItem(at: url)?.shouldOpenAsFolder == true {
+            return url
+        }
+
+        return ((browser.parentForItems(inColumn: column) as? NSURL) as URL?)
+            ?? currentDirectory
     }
 
     private func browserItems(in directory: URL) -> [FileItem] {
