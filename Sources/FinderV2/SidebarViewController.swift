@@ -233,6 +233,42 @@ final class SidebarViewController: NSViewController {
         ejectLocation(at: index)
     }
 
+    @objc private func hideContextCloudLocation() {
+        guard let location = contextLocation(), location.isCloudStorage else { return }
+        HiddenCloudLocationStore.hide(location.url)
+        reloadLocations()
+    }
+
+    @objc private func openCloudProviderManagement() {
+        guard let location = contextLocation(),
+              let bundleIdentifier = location.cloudProviderBundleIdentifier,
+              let appURL = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: bundleIdentifier
+              ) else {
+            showCloudManagementUnavailable()
+            return
+        }
+
+        guard NSWorkspace.shared.open(appURL) else {
+            showCloudManagementUnavailable()
+            return
+        }
+    }
+
+    @objc private func showHiddenCloudLocations() {
+        HiddenCloudLocationStore.unhideAll()
+        reloadLocations()
+    }
+
+    private func showCloudManagementUnavailable() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "搵唔到 Google Drive"
+        alert.informativeText = "請先開啟或重新安裝 Google Drive，再管理帳戶連結。"
+        alert.addButton(withTitle: "知道")
+        alert.runModal()
+    }
+
     func contextMenuTitlesForTesting(at row: Int) -> [String] {
         let menu = NSMenu()
         buildContextMenu(menu, for: row)
@@ -481,6 +517,13 @@ extension SidebarViewController: NSMenuDelegate {
         guard row >= 0, row < locations.count else {
             contextFavoriteIndex = nil
             contextLocationIndex = nil
+            if HiddenCloudLocationStore.hasHiddenLocations {
+                addContextMenuItem(
+                    to: menu,
+                    title: "顯示已隱藏雲端位置",
+                    action: #selector(showHiddenCloudLocations)
+                )
+            }
             return
         }
         contextLocationIndex = row
@@ -514,6 +557,30 @@ extension SidebarViewController: NSMenuDelegate {
             action: #selector(showContextLocationInfo)
         )
 
+        if location.isCloudStorage {
+            menu.addItem(.separator())
+            let statusTitle = location.isFileProviderBacked
+                ? "狀態：已連結"
+                : "狀態：舊資料夾／未連結"
+            let statusItem = menu.addItem(
+                withTitle: statusTitle,
+                action: nil,
+                keyEquivalent: ""
+            )
+            statusItem.isEnabled = false
+            if location.cloudProviderBundleIdentifier != nil {
+                addContextMenuItem(
+                    to: menu,
+                    title: "開啟 Google Drive 管理…",
+                    action: #selector(openCloudProviderManagement)
+                )
+            }
+            addContextMenuItem(
+                to: menu,
+                title: "從側邊欄中移除",
+                action: #selector(hideContextCloudLocation)
+            )
+        }
         if location.isFavorite {
             menu.addItem(.separator())
             addContextMenuItem(

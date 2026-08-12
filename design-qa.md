@@ -39,9 +39,10 @@ Its content area was cropped to 1800 × 1050.5 points and scaled to the final
   and stay aligned when the window changes size. A manual divider adjustment is
   preserved without breaking the other layout ratios.
 - Context menu: passed. The app uses native macOS menus and includes Finder-like
-  file, blank-area, sidebar-location and breadcrumb/path actions. The final accessibility tree was
-  checked because the Computer Use capture does not expose a screenshot while a
-  native menu is open.
+  file, blank-area, sidebar-location and breadcrumb/path actions. Google Drive
+  sidebar items also show linked/old-folder status, open Google Drive management,
+  and hide without deleting the folder. The final accessibility tree was checked
+  because the Computer Use capture does not expose a screenshot while a native
 
 ## Interaction checks
 
@@ -52,7 +53,7 @@ Its content area was cropped to 1800 × 1050.5 points and scaled to the final
 - Sync button, work list and undo on temporary folders: passed.
 - Native drag-and-drop between panes: not verified in this run; the desktop
   mouse simulator did not trigger the app's drag session.
-- Full automated suite: 43 of 43 tests passed.
+- Full automated suite: 45 of 45 tests passed.
 
 ## Comparison history
 

@@ -136,6 +136,55 @@ struct ContextMenuTests {
         ])
     }
 
+    @Test("Google Drive 右鍵顯示狀態、管理及取消顯示")
+    @MainActor
+    func googleDriveSidebarContextMenuTitles() {
+        let directory = FileManager.default.temporaryDirectory
+        let controller = SidebarViewController(
+            locationProvider: {
+                [SidebarLocation(
+                    title: "舊 Google Drive",
+                    url: directory,
+                    symbolName: "externaldrive.badge.icloud",
+                    isCloudStorage: true,
+                    isFileProviderBacked: false,
+                    cloudProviderBundleIdentifier: "com.google.drivefs"
+                )]
+            }
+        )
+        _ = controller.view
+
+        let titles = controller.contextMenuTitlesForTesting(at: 0)
+        #expect(titles.contains("狀態：舊資料夾／未連結"))
+        #expect(titles.contains("開啟 Google Drive 管理…"))
+        #expect(titles.contains("從側邊欄中移除"))
+    }
+
+    @Test("移除雲端位置只改顯示設定，不會刪除資料夾")
+    func hidingCloudLocationIsReversible() {
+        let directory = FileManager.default.temporaryDirectory
+        let previous = UserDefaults.standard.object(
+            forKey: HiddenCloudLocationStore.defaultsKey
+        )
+        defer {
+            if let previous {
+                UserDefaults.standard.set(previous, forKey: HiddenCloudLocationStore.defaultsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: HiddenCloudLocationStore.defaultsKey)
+            }
+        }
+
+        HiddenCloudLocationStore.unhideAll()
+        HiddenCloudLocationStore.hide(directory)
+
+        #expect(HiddenCloudLocationStore.isHidden(directory))
+        #expect(FileManager.default.fileExists(atPath: directory.path))
+
+        HiddenCloudLocationStore.unhideAll()
+        #expect(!HiddenCloudLocationStore.isHidden(directory))
+        #expect(FileManager.default.fileExists(atPath: directory.path))
+    }
+
     @Test("路徑列右鍵提供拷貝資料夾及複製路徑")
     @MainActor
     func pathContextMenuTitles() {

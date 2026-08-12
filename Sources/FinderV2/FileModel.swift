@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 enum CloudAvailability: Hashable {
     case local
@@ -189,6 +190,9 @@ struct SidebarLocation: Hashable {
     var isFavorite = false
     var favoriteID: UUID?
     var isExternalVolume = false
+    var isCloudStorage = false
+    var isFileProviderBacked = false
+    var cloudProviderBundleIdentifier: String?
 }
 
 struct MountedVolumeDescriptor: Hashable {
@@ -296,6 +300,44 @@ final class FavoriteStore {
     }
 }
 
+enum HiddenCloudLocationStore {
+    static let defaultsKey = "FinderV2HiddenCloudLocations"
+
+    static var hiddenPaths: Set<String> {
+        Set(UserDefaults.standard.stringArray(forKey: defaultsKey) ?? [])
+    }
+
+    static var hasHiddenLocations: Bool {
+        !hiddenPaths.isEmpty
+    }
+
+    static func isHidden(_ url: URL) -> Bool {
+        hiddenPaths.contains(url.standardizedFileURL.path)
+    }
+
+    static func hide(_ url: URL) {
+        var paths = hiddenPaths
+        paths.insert(url.standardizedFileURL.path)
+        UserDefaults.standard.set(Array(paths).sorted(), forKey: defaultsKey)
+    }
+
+    static func unhideAll() {
+        UserDefaults.standard.removeObject(forKey: defaultsKey)
+    }
+}
+
+private enum CloudStorageMetadata {
+    private static let fileProviderDomainAttribute = "com.apple.file-provider-domain-id"
+
+    static func isFileProviderBacked(at url: URL) -> Bool {
+        url.path.withCString { path in
+            fileProviderDomainAttribute.withCString { name in
+                Darwin.getxattr(path, name, nil, 0, 0, 0) > 0
+            }
+        }
+    }
+}
+
 enum SidebarLocationProvider {
     private static let volumeResourceKeys: Set<URLResourceKey> = [
         .volumeIsInternalKey,
@@ -344,9 +386,26 @@ enum SidebarLocationProvider {
             options: [.skipsHiddenFiles]
         ) {
             for cloudURL in cloudURLs.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                let standardizedURL = cloudURL.standardizedFileURL
+                guard !HiddenCloudLocationStore.isHidden(standardizedURL) else { continue }
+
                 let name = cloudURL.lastPathComponent
                     .replacingOccurrences(of: "GoogleDrive-", with: "Google Drive – ")
-                locations.append(SidebarLocation(title: name, url: cloudURL, symbolName: "externaldrive.badge.icloud"))
+                let isFileProviderBacked = CloudStorageMetadata.isFileProviderBacked(at: standardizedURL)
+                let title = isFileProviderBacked ? name : "\(name)（舊資料夾）"
+                let providerBundleIdentifier = cloudURL.lastPathComponent.hasPrefix("GoogleDrive-")
+                    ? "com.google.drivefs"
+                    : nil
+                locations.append(
+                    SidebarLocation(
+                        title: title,
+                        url: standardizedURL,
+                        symbolName: "externaldrive.badge.icloud",
+                        isCloudStorage: true,
+                        isFileProviderBacked: isFileProviderBacked,
+                        cloudProviderBundleIdentifier: providerBundleIdentifier
+                    )
+                )
             }
         }
 
