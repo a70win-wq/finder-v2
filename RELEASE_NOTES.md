@@ -1,3 +1,11 @@
+# Finder v2.0 1.1.4
+
+改善路徑列操作：
+
+- 撳目前所在嘅 breadcrumb 會轉成完整路徑欄。
+- 完整路徑會自動揀中，可以直接按 Command-C 複製。
+- 按 Return 會開啟輸入嘅資料夾，按 Escape 返回 breadcrumb。
+- 上層路徑仍然可以照常撳入去。
 # Finder v2.0 1.1.3
 
 改善 Google Drive 側邊欄管理：

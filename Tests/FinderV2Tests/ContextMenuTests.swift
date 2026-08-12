@@ -199,6 +199,23 @@ struct ContextMenuTests {
         #expect(titles.contains { $0.hasPrefix("拷貝「") })
         #expect(titles.contains("取得資料"))
     }
+    @Test("撳目前路徑會顯示完整路徑並可以複製")
+    @MainActor
+    func pathBarEditingShowsFullPath() {
+        let directory = FileManager.default.temporaryDirectory.standardizedFileURL
+        let controller = PaneViewController(
+            storageKey: "PathBarEditingTest",
+            initialURL: directory
+        )
+        _ = controller.view
+
+        controller.beginPathEditingForTesting()
+        #expect(controller.isPathEditingForTesting)
+        #expect(controller.addressFieldTextForTesting == directory.path)
+
+        controller.cancelPathEditingForTesting()
+        #expect(!controller.isPathEditingForTesting)
+    }
 
     @Test("右鍵新項目只揀該項，右鍵多選內項目會保留多選")
     @MainActor

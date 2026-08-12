@@ -41,8 +41,10 @@ Its content area was cropped to 1800 × 1050.5 points and scaled to the final
 - Context menu: passed. The app uses native macOS menus and includes Finder-like
   file, blank-area, sidebar-location and breadcrumb/path actions. Google Drive
   sidebar items also show linked/old-folder status, open Google Drive management,
-  and hide without deleting the folder. The final accessibility tree was checked
-  because the Computer Use capture does not expose a screenshot while a native
+  and hide without deleting the folder. Clicking the current breadcrumb also
+  opens a selectable full-path field for copying. The final accessibility tree
+  was checked because the Computer Use capture does not expose a screenshot
+  while a native menu is open.
 
 ## Interaction checks
 
@@ -53,7 +55,7 @@ Its content area was cropped to 1800 × 1050.5 points and scaled to the final
 - Sync button, work list and undo on temporary folders: passed.
 - Native drag-and-drop between panes: not verified in this run; the desktop
   mouse simulator did not trigger the app's drag session.
-- Full automated suite: 45 of 45 tests passed.
+- Full automated suite: 46 of 46 tests passed.
 
 ## Comparison history
 

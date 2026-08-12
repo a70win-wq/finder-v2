@@ -20,6 +20,14 @@ private final class FinderPathControl: NSPathControl {
     }
 }
 
+private final class FinderAddressField: NSTextField {
+    var onCancel: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) {
+        onCancel?()
+    }
+}
+
 final class PaneViewController: NSViewController {
     let storageKey: String
     var didActivate: ((PaneViewController) -> Void)?
@@ -28,6 +36,7 @@ final class PaneViewController: NSViewController {
     private let sidebarController = SidebarViewController()
     private let fileTableController = FileTableViewController()
     private let pathControl = FinderPathControl()
+    private let addressField = FinderAddressField()
     private let backButton = NSButton()
     private let forwardButton = NSButton()
     private let upButton = NSButton()
@@ -52,6 +61,7 @@ final class PaneViewController: NSViewController {
     private(set) var showHiddenFiles = false
     private var quickLookURLs: [URL] = []
     private(set) var currentDirectory: URL
+    private var isEditingPath = false
     var currentItems: [FileItem] { allItems }
 
     init(storageKey: String, initialURL: URL) {
@@ -135,6 +145,22 @@ final class PaneViewController: NSViewController {
         )
         pathControl.translatesAutoresizingMaskIntoConstraints = false
         toolbar.addSubview(pathControl)
+
+        addressField.controlSize = .regular
+        addressField.font = .systemFont(ofSize: 12)
+        addressField.isEditable = true
+        addressField.isSelectable = true
+        addressField.usesSingleLineMode = true
+        addressField.lineBreakMode = .byTruncatingMiddle
+        addressField.placeholderString = "完整路徑"
+        addressField.toolTip = "按 Command-C 複製完整路徑；Return 開啟；Escape 返回"
+        addressField.setAccessibilityLabel("完整路徑")
+        addressField.target = self
+        addressField.action = #selector(pathEditingCommitted)
+        addressField.onCancel = { [weak self] in self?.endPathEditing() }
+        addressField.isHidden = true
+        addressField.translatesAutoresizingMaskIntoConstraints = false
+        toolbar.addSubview(addressField)
 
         let actionStack = NSStackView(views: [viewModeControl, refreshButton, chooseFolderButton, folderButton])
         actionStack.orientation = .horizontal
@@ -253,6 +279,10 @@ final class PaneViewController: NSViewController {
             pathControl.trailingAnchor.constraint(equalTo: actionStack.leadingAnchor, constant: -7),
             pathControl.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
 
+            addressField.leadingAnchor.constraint(equalTo: pathControl.leadingAnchor),
+            addressField.trailingAnchor.constraint(equalTo: pathControl.trailingAnchor),
+            addressField.centerYAnchor.constraint(equalTo: pathControl.centerYAnchor),
+
             optionsBar.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             optionsBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             optionsBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -360,6 +390,7 @@ final class PaneViewController: NSViewController {
 
     func navigate(to url: URL, recordingHistory: Bool) {
         didActivate?(self)
+        endPathEditing()
         let standardized = url.standardizedFileURL
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: standardized.path, isDirectory: &isDirectory),
@@ -1311,10 +1342,73 @@ final class PaneViewController: NSViewController {
         updateFavoriteButton()
     }
 
+    private func beginPathEditing() {
+        didActivate?(self)
+        guard !isEditingPath else { return }
+        isEditingPath = true
+        addressField.stringValue = currentDirectory.path
+        pathControl.isHidden = true
+        addressField.isHidden = false
+        view.window?.makeFirstResponder(addressField)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isEditingPath else { return }
+            self.addressField.selectText(nil)
+        }
+    }
+
+    private func endPathEditing() {
+        guard isEditingPath else { return }
+        isEditingPath = false
+        addressField.resignFirstResponder()
+        addressField.isHidden = true
+        pathControl.isHidden = false
+    }
+
+    @objc private func pathEditingCommitted() {
+        let typedPath = addressField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typedPath.isEmpty else {
+            endPathEditing()
+            return
+        }
+
+        let expandedPath = (typedPath as NSString).expandingTildeInPath
+        let url = URL(fileURLWithPath: expandedPath).standardizedFileURL
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            showMessage(title: "搵唔到資料夾", message: "請輸入一條存在嘅資料夾路徑。")
+            addressField.becomeFirstResponder()
+            addressField.selectText(nil)
+            return
+        }
+
+        endPathEditing()
+        navigate(to: url, recordingHistory: true)
+    }
+
+    func beginPathEditingForTesting() {
+        beginPathEditing()
+    }
+
+    func cancelPathEditingForTesting() {
+        endPathEditing()
+    }
+
+    var isPathEditingForTesting: Bool {
+        isEditingPath
+    }
+
+    var addressFieldTextForTesting: String {
+        addressField.stringValue
+    }
     @objc private func pathControlClicked() {
         if let url = pathControl.clickedPathItem?.url {
-            navigate(to: url, recordingHistory: true)
+            if url.standardizedFileURL == currentDirectory.standardizedFileURL {
+                beginPathEditing()
+            } else {
+                navigate(to: url, recordingHistory: true)
         }
+            }
     }
 
     @objc private func fileSystemChanged() {
