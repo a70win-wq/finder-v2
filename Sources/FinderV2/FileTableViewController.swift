@@ -455,6 +455,7 @@ final class FileTableViewController: NSViewController {
         tableView.rowHeight = 30
         tableView.intercellSpacing = NSSize(width: 8, height: 0)
         tableView.focusRingType = .none
+        tableView.backgroundColor = .textBackgroundColor
         tableView.gridStyleMask = []
         tableView.delegate = self
         tableView.dataSource = self
@@ -618,7 +619,7 @@ final class FileTableViewController: NSViewController {
         galleryLayout.scrollDirection = .horizontal
 
         galleryCollectionView.collectionViewLayout = galleryLayout
-        galleryCollectionView.backgroundColors = [.controlBackgroundColor]
+        galleryCollectionView.backgroundColors = [.textBackgroundColor]
         galleryCollectionView.isSelectable = true
         galleryCollectionView.allowsMultipleSelection = true
         galleryCollectionView.delegate = self
@@ -660,6 +661,7 @@ final class FileTableViewController: NSViewController {
         galleryScrollView.hasVerticalScroller = false
         galleryScrollView.hasHorizontalScroller = true
         galleryScrollView.autohidesScrollers = true
+        galleryScrollView.drawsBackground = false
         galleryScrollView.translatesAutoresizingMaskIntoConstraints = false
         galleryContainer.addSubview(galleryScrollView)
 
@@ -1194,7 +1196,34 @@ final class FileTableViewController: NSViewController {
         return cell
     }
 
-    private func nameCell(for item: FileItem) -> NSTableCellView {
+    private func applyNameTextStyle(
+        to cell: ThumbnailCellView,
+        item: FileItem,
+        isSelected: Bool
+    ) {
+        if isSelected {
+            cell.textField?.textColor = .alternateSelectedControlTextColor
+            cell.textField?.toolTip = nil
+            return
+        }
+
+        switch comparisonStates[item.name] {
+        case .onlyHere:
+            cell.textField?.textColor = .systemBlue
+            cell.textField?.toolTip = "只在呢邊"
+        case .different:
+            cell.textField?.textColor = .systemOrange
+            cell.textField?.toolTip = "兩邊版本唔同"
+        case .same:
+            cell.textField?.textColor = .secondaryLabelColor
+            cell.textField?.toolTip = "兩邊一樣"
+        case nil:
+            cell.textField?.textColor = .labelColor
+            cell.textField?.toolTip = nil
+        }
+    }
+
+    private func nameCell(for item: FileItem, isSelected: Bool) -> NSTableCellView {
         let identifier = NSUserInterfaceItemIdentifier("NameCell")
         let cell: ThumbnailCellView
         if let reused = tableView.makeView(withIdentifier: identifier, owner: self) as? ThumbnailCellView {
@@ -1232,20 +1261,7 @@ final class FileTableViewController: NSViewController {
 
         cell.representedFileURL = item.url.standardizedFileURL
         cell.textField?.stringValue = item.name
-        switch comparisonStates[item.name] {
-        case .onlyHere:
-            cell.textField?.textColor = .systemBlue
-            cell.textField?.toolTip = "只在呢邊"
-        case .different:
-            cell.textField?.textColor = .systemOrange
-            cell.textField?.toolTip = "兩邊版本唔同"
-        case .same:
-            cell.textField?.textColor = .secondaryLabelColor
-            cell.textField?.toolTip = "兩邊一樣"
-        case nil:
-            cell.textField?.textColor = .labelColor
-            cell.textField?.toolTip = nil
-        }
+        applyNameTextStyle(to: cell, item: item, isSelected: isSelected)
         cell.imageView?.image = NSWorkspace.shared.icon(forFile: item.url.path)
         cell.imageView?.imageFrameStyle = .none
 
@@ -1267,6 +1283,26 @@ final class FileTableViewController: NSViewController {
     }
 }
 
+private extension FileTableViewController {
+    func refreshVisibleNameCellStyles() {
+        let visibleRows = tableView.rows(in: tableView.visibleRect)
+        guard visibleRows.length > 0 else { return }
+
+        for row in visibleRows.location..<(visibleRows.location + visibleRows.length) {
+            guard items.indices.contains(row),
+                  let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ThumbnailCellView else {
+                continue
+            }
+            applyNameTextStyle(
+                to: cell,
+                item: items[row],
+                isSelected: tableView.selectedRowIndexes.contains(row)
+            )
+        }
+    }
+
+}
+
 extension FileTableViewController: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int {
         items.count
@@ -1277,7 +1313,7 @@ extension FileTableViewController: NSTableViewDataSource, NSTableViewDelegate {
         let item = items[row]
         switch identifier {
         case Column.name:
-            return nameCell(for: item)
+            return nameCell(for: item, isSelected: tableView.selectedRowIndexes.contains(row))
         case Column.size:
             return plainCell(identifier: NSUserInterfaceItemIdentifier("SizeCell"), text: FileFormatting.size(for: item))
         case Column.kind:
@@ -1292,6 +1328,7 @@ extension FileTableViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        refreshVisibleNameCellStyles()
         delegate?.fileTableDidActivate(self)
     }
 

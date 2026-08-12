@@ -92,13 +92,14 @@ final class PaneViewController: NSViewController {
         configureButton(backButton, symbol: "chevron.left", tooltip: "返回", action: #selector(goBack))
         configureButton(forwardButton, symbol: "chevron.right", tooltip: "前進", action: #selector(goForward))
         configureButton(upButton, symbol: "arrow.up", tooltip: "上一層", action: #selector(goUp))
-        configureButton(refreshButton, symbol: "arrow.clockwise", tooltip: "重新整理", action: #selector(refreshPressed), title: "重新整理", width: 72)
+        configureButton(refreshButton, symbol: "arrow.clockwise", tooltip: "重新整理", action: #selector(refreshPressed), title: "重新整理", width: 78)
         let chooseFolderButton = makeButton(symbol: "folder", tooltip: "選擇資料夾", action: #selector(chooseFolderPressed))
         let folderButton = makeButton(symbol: "folder.badge.plus", tooltip: "新增資料夾", action: #selector(newFolderPressed))
 
         viewModeControl.segmentCount = 4
         viewModeControl.trackingMode = .selectOne
         viewModeControl.segmentStyle = .rounded
+        viewModeControl.controlSize = .regular
         viewModeControl.setImage(
             NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "清單"),
             forSegment: FileViewMode.list.rawValue
@@ -165,7 +166,7 @@ final class PaneViewController: NSViewController {
 
         let actionStack = NSStackView(views: [viewModeControl, refreshButton, chooseFolderButton, folderButton])
         actionStack.orientation = .horizontal
-        actionStack.spacing = 4
+        actionStack.spacing = 6
         actionStack.translatesAutoresizingMaskIntoConstraints = false
         toolbar.addSubview(actionStack)
 
@@ -274,7 +275,7 @@ final class PaneViewController: NSViewController {
 
             actionStack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -8),
             actionStack.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            actionStack.widthAnchor.constraint(equalToConstant: 252),
+            actionStack.widthAnchor.constraint(equalToConstant: 264),
 
             pathControl.leadingAnchor.constraint(equalTo: navigationStack.trailingAnchor, constant: 7),
             pathControl.trailingAnchor.constraint(equalTo: actionStack.leadingAnchor, constant: -7),
@@ -1557,11 +1558,12 @@ final class PaneViewController: NSViewController {
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
         button.title = title ?? ""
         button.imagePosition = title == nil ? .imageOnly : .imageLeading
-        button.bezelStyle = title == nil ? .accessoryBarAction : .rounded
-        button.controlSize = .small
-        if title != nil {
-            button.font = .systemFont(ofSize: 11)
-        }
+        button.imageHugsTitle = true
+        button.alignment = .center
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .regular
+        button.contentTintColor = .labelColor
+        button.font = .systemFont(ofSize: 12, weight: .medium)
         button.toolTip = tooltip
         button.setAccessibilityLabel(tooltip)
         button.target = self

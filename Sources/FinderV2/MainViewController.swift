@@ -603,10 +603,13 @@ final class MainViewController: NSViewController {
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
         button.imagePosition = .imageLeading
         button.imageHugsTitle = true
+        button.alignment = .center
         button.font = .systemFont(ofSize: 12, weight: .medium)
         button.bezelStyle = .accessoryBarAction
         button.controlSize = .regular
+        button.contentTintColor = .labelColor
         button.toolTip = tooltip
+        button.setAccessibilityLabel(tooltip)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.heightAnchor.constraint(equalToConstant: 28).isActive = true
     }
