@@ -213,8 +213,21 @@ struct ContextMenuTests {
         #expect(controller.isPathEditingForTesting)
         #expect(controller.addressFieldTextForTesting == directory.path)
 
+
         controller.cancelPathEditingForTesting()
         #expect(!controller.isPathEditingForTesting)
+    }
+    @Test("工具列顯示清楚嘅重新整理掣")
+    @MainActor
+    func refreshButtonIsVisible() {
+        let controller = PaneViewController(
+            storageKey: "RefreshButtonTest",
+            initialURL: FileManager.default.temporaryDirectory
+        )
+        _ = controller.view
+
+        #expect(controller.refreshButtonTitleForTesting == "重新整理")
+        #expect(controller.refreshButtonIsVisibleForTesting)
     }
 
     @Test("右鍵新項目只揀該項，右鍵多選內項目會保留多選")

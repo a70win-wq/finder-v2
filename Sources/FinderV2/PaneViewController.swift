@@ -42,6 +42,7 @@ final class PaneViewController: NSViewController {
     private let upButton = NSButton()
     private let viewModeControl = NSSegmentedControl()
     private let searchField = NSSearchField()
+    private let refreshButton = NSButton()
     private let sortPopUp = NSPopUpButton()
     private let sortDirectionButton = NSButton()
     private let hiddenFilesButton = NSButton()
@@ -91,7 +92,7 @@ final class PaneViewController: NSViewController {
         configureButton(backButton, symbol: "chevron.left", tooltip: "返回", action: #selector(goBack))
         configureButton(forwardButton, symbol: "chevron.right", tooltip: "前進", action: #selector(goForward))
         configureButton(upButton, symbol: "arrow.up", tooltip: "上一層", action: #selector(goUp))
-        let refreshButton = makeButton(symbol: "arrow.clockwise", tooltip: "重新整理", action: #selector(refreshPressed))
+        configureButton(refreshButton, symbol: "arrow.clockwise", tooltip: "重新整理", action: #selector(refreshPressed), title: "重新整理", width: 72)
         let chooseFolderButton = makeButton(symbol: "folder", tooltip: "選擇資料夾", action: #selector(chooseFolderPressed))
         let folderButton = makeButton(symbol: "folder.badge.plus", tooltip: "新增資料夾", action: #selector(newFolderPressed))
 
@@ -273,7 +274,7 @@ final class PaneViewController: NSViewController {
 
             actionStack.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -8),
             actionStack.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            actionStack.widthAnchor.constraint(equalToConstant: 214),
+            actionStack.widthAnchor.constraint(equalToConstant: 252),
 
             pathControl.leadingAnchor.constraint(equalTo: navigationStack.trailingAnchor, constant: 7),
             pathControl.trailingAnchor.constraint(equalTo: actionStack.leadingAnchor, constant: -7),
@@ -1549,24 +1550,52 @@ final class PaneViewController: NSViewController {
         _ button: NSButton,
         symbol: String,
         tooltip: String,
-        action: Selector
+        action: Selector,
+        title: String? = nil,
+        width: CGFloat = 28
     ) {
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
-        button.imagePosition = .imageOnly
-        button.bezelStyle = .accessoryBarAction
+        button.title = title ?? ""
+        button.imagePosition = title == nil ? .imageOnly : .imageLeading
+        button.bezelStyle = title == nil ? .accessoryBarAction : .rounded
         button.controlSize = .small
+        if title != nil {
+            button.font = .systemFont(ofSize: 11)
+        }
         button.toolTip = tooltip
+        button.setAccessibilityLabel(tooltip)
         button.target = self
         button.action = action
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        button.widthAnchor.constraint(equalToConstant: width).isActive = true
         button.heightAnchor.constraint(equalToConstant: 26).isActive = true
     }
 
-    private func makeButton(symbol: String, tooltip: String, action: Selector) -> NSButton {
+    private func makeButton(
+        symbol: String,
+        tooltip: String,
+        action: Selector,
+        title: String? = nil,
+        width: CGFloat = 28
+    ) -> NSButton {
         let button = NSButton()
-        configureButton(button, symbol: symbol, tooltip: tooltip, action: action)
+        configureButton(
+            button,
+            symbol: symbol,
+            tooltip: tooltip,
+            action: action,
+            title: title,
+            width: width
+        )
         return button
+    }
+
+    var refreshButtonTitleForTesting: String {
+        refreshButton.title
+    }
+
+    var refreshButtonIsVisibleForTesting: Bool {
+        refreshButton.superview != nil && !refreshButton.isHidden
     }
 
     private func labeledControl(title: String, control: NSView) -> NSView {

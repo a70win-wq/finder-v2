@@ -708,13 +708,27 @@ final class FileTableViewController: NSViewController {
 
     func reload(items: [FileItem], currentDirectory: URL) {
         let selected = Set(selectedURLs())
+        let directoryChanged = self.currentDirectory?.standardizedFileURL
+            != currentDirectory.standardizedFileURL
         self.items = items
         self.currentDirectory = currentDirectory
         tableView.reloadData()
         collectionView.reloadData()
         galleryCollectionView.reloadData()
         browserItemsCache.removeAll()
-        browser.loadColumnZero()
+        if viewMode == .columns,
+           !directoryChanged,
+           browser.isLoaded,
+           browser.lastColumn >= 0 {
+            var column = 0
+            while column <= browser.lastColumn {
+                browser.reloadColumn(column)
+                column += 1
+            }
+            browser.validateVisibleColumns()
+        } else {
+            browser.loadColumnZero()
+        }
 
         let indexes = IndexSet(items.indices.filter { selected.contains(items[$0].url) })
         tableView.selectRowIndexes(indexes, byExtendingSelection: false)
