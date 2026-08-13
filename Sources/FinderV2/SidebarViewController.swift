@@ -46,7 +46,7 @@ final class SidebarViewController: NSViewController {
     override func loadView() {
         let root = NSView()
         root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor.underPageBackgroundColor.cgColor
+        root.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
 
         let heading = NSTextField(labelWithString: "常用位置")
         heading.font = .systemFont(ofSize: 10.5, weight: .semibold)
@@ -61,7 +61,7 @@ final class SidebarViewController: NSViewController {
         tableView.rowHeight = 27
         tableView.intercellSpacing = NSSize(width: 0, height: 1)
         tableView.backgroundColor = .clear
-        tableView.style = .sourceList
+        tableView.style = .plain
         tableView.selectionHighlightStyle = .regular
         tableView.focusRingType = .none
         tableView.delegate = self
@@ -275,6 +275,10 @@ final class SidebarViewController: NSViewController {
         return menu.items.map { item in
             item.isSeparatorItem ? "—" : item.title
         }
+    }
+
+    var tableStyleForTesting: NSTableView.Style {
+        tableView.style
     }
 
     @objc private func openContextLocation() {

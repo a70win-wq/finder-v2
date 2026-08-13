@@ -136,6 +136,16 @@ struct ContextMenuTests {
         ])
     }
 
+    @Test("側邊欄使用清爽內容背景")
+    @MainActor
+    func sidebarUsesContentBackground() {
+        let controller = SidebarViewController(locationProvider: { [] })
+        _ = controller.view
+
+        #expect(controller.view.layer?.backgroundColor == NSColor.textBackgroundColor.cgColor)
+        #expect(controller.tableStyleForTesting == .plain)
+    }
+
     @Test("Google Drive 右鍵顯示狀態、管理及取消顯示")
     @MainActor
     func googleDriveSidebarContextMenuTitles() {
