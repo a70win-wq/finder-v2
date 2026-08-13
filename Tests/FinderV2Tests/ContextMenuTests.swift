@@ -199,7 +199,7 @@ struct ContextMenuTests {
         #expect(titles.contains { $0.hasPrefix("拷貝「") })
         #expect(titles.contains("取得資料"))
     }
-    @Test("撳目前路徑會顯示完整路徑並可以複製")
+    @Test("撳路徑 folder 或空白位置都會顯示完整路徑")
     @MainActor
     func pathBarEditingShowsFullPath() {
         let directory = FileManager.default.temporaryDirectory.standardizedFileURL
@@ -210,7 +210,7 @@ struct ContextMenuTests {
         )
         _ = controller.view
 
-        controller.beginPathEditingForTesting()
+        controller.showPathForTesting(clickedURL: nil)
         #expect(controller.isPathEditingForTesting)
         #expect(controller.addressFieldTextForTesting == directory.path)
 
@@ -218,7 +218,7 @@ struct ContextMenuTests {
         controller.cancelPathEditingForTesting()
         #expect(!controller.isPathEditingForTesting)
 
-        controller.beginPathEditingForTesting(url: parentDirectory)
+        controller.showPathForTesting(clickedURL: parentDirectory)
         #expect(controller.isPathEditingForTesting)
         #expect(controller.addressFieldTextForTesting == parentDirectory.path)
 

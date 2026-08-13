@@ -4,6 +4,15 @@ import UniformTypeIdentifiers
 
 private final class FinderPathControl: NSPathControl {
     var makeContextMenu: ((URL) -> NSMenu?)?
+    var onPrimaryClick: ((URL?) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let componentURL = (cell as? NSPathCell)?
+            .pathComponentCell(at: point, withFrame: bounds, in: self)?
+            .url
+        onPrimaryClick?(componentURL)
+    }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
@@ -140,6 +149,9 @@ final class PaneViewController: NSViewController {
         pathControl.action = #selector(pathControlClicked)
         pathControl.makeContextMenu = { [weak self] url in
             self?.makePathContextMenu(for: url)
+        }
+        pathControl.onPrimaryClick = { [weak self] url in
+            self?.showPath(for: url)
         }
         pathControl.setContentCompressionResistancePriority(
             NSLayoutConstraint.Priority(1),
@@ -1362,6 +1374,10 @@ final class PaneViewController: NSViewController {
         beginPathEditing(for: currentDirectory)
     }
 
+    private func showPath(for clickedURL: URL?) {
+        beginPathEditing(for: clickedURL ?? currentDirectory)
+    }
+
     private func endPathEditing() {
         guard isEditingPath else { return }
         isEditingPath = false
@@ -1400,6 +1416,10 @@ final class PaneViewController: NSViewController {
         beginPathEditing(for: url)
     }
 
+    func showPathForTesting(clickedURL: URL?) {
+        showPath(for: clickedURL)
+    }
+
     func cancelPathEditingForTesting() {
         endPathEditing()
     }
@@ -1412,8 +1432,7 @@ final class PaneViewController: NSViewController {
         addressField.stringValue
     }
     @objc private func pathControlClicked() {
-        guard let url = pathControl.clickedPathItem?.url else { return }
-        beginPathEditing(for: url)
+        showPath(for: pathControl.clickedPathItem?.url)
     }
 
     @objc private func fileSystemChanged() {
