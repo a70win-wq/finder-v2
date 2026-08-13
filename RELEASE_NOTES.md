@@ -1,3 +1,11 @@
+# Finder v2.0 1.1.9
+
+修正左右兩邊路徑列：
+
+- 左右任何一格嘅目前 folder 或上一層 folder，撳一下都會顯示該層完整 path。
+- 顯示後可以直接按 Command-C 複製；按 Return 先開啟該 folder。
+- 上一層 folder 唔會再一撳就跳走，左右兩邊操作完全一致。
+
 # Finder v2.0 1.1.8
 
 整體 UI 整理：

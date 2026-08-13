@@ -1344,11 +1344,11 @@ final class PaneViewController: NSViewController {
         updateFavoriteButton()
     }
 
-    private func beginPathEditing() {
+    private func beginPathEditing(for url: URL) {
         didActivate?(self)
         guard !isEditingPath else { return }
         isEditingPath = true
-        addressField.stringValue = currentDirectory.path
+        addressField.stringValue = url.standardizedFileURL.path
         pathControl.isHidden = true
         addressField.isHidden = false
         view.window?.makeFirstResponder(addressField)
@@ -1356,6 +1356,10 @@ final class PaneViewController: NSViewController {
             guard let self, self.isEditingPath else { return }
             self.addressField.selectText(nil)
         }
+    }
+
+    private func beginPathEditing() {
+        beginPathEditing(for: currentDirectory)
     }
 
     private func endPathEditing() {
@@ -1392,6 +1396,10 @@ final class PaneViewController: NSViewController {
         beginPathEditing()
     }
 
+    func beginPathEditingForTesting(url: URL) {
+        beginPathEditing(for: url)
+    }
+
     func cancelPathEditingForTesting() {
         endPathEditing()
     }
@@ -1404,13 +1412,8 @@ final class PaneViewController: NSViewController {
         addressField.stringValue
     }
     @objc private func pathControlClicked() {
-        if let url = pathControl.clickedPathItem?.url {
-            if url.standardizedFileURL == currentDirectory.standardizedFileURL {
-                beginPathEditing()
-            } else {
-                navigate(to: url, recordingHistory: true)
-        }
-            }
+        guard let url = pathControl.clickedPathItem?.url else { return }
+        beginPathEditing(for: url)
     }
 
     @objc private func fileSystemChanged() {

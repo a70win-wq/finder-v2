@@ -203,6 +203,7 @@ struct ContextMenuTests {
     @MainActor
     func pathBarEditingShowsFullPath() {
         let directory = FileManager.default.temporaryDirectory.standardizedFileURL
+        let parentDirectory = directory.deletingLastPathComponent().standardizedFileURL
         let controller = PaneViewController(
             storageKey: "PathBarEditingTest",
             initialURL: directory
@@ -213,6 +214,13 @@ struct ContextMenuTests {
         #expect(controller.isPathEditingForTesting)
         #expect(controller.addressFieldTextForTesting == directory.path)
 
+
+        controller.cancelPathEditingForTesting()
+        #expect(!controller.isPathEditingForTesting)
+
+        controller.beginPathEditingForTesting(url: parentDirectory)
+        #expect(controller.isPathEditingForTesting)
+        #expect(controller.addressFieldTextForTesting == parentDirectory.path)
 
         controller.cancelPathEditingForTesting()
         #expect(!controller.isPathEditingForTesting)
