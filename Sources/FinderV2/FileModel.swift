@@ -25,9 +25,12 @@ struct FileItem: Hashable {
     let modifiedDate: Date?
     let kind: String
     var cloudAvailability: CloudAvailability = .local
+    // load() 會一次過計好顯示名稱，避免排序同顯示時重複呼叫
+    // FileManager.displayName(atPath:)，呢個係純粹嘅內部快取。
+    var storedName: String?
 
     var name: String {
-        FileManager.default.displayName(atPath: url.path)
+        storedName ?? FileManager.default.displayName(atPath: url.path)
     }
 
     var shouldOpenAsFolder: Bool {
@@ -56,7 +59,8 @@ struct FileItem: Hashable {
             fileSize: values.fileSize.map(Int64.init),
             modifiedDate: values.contentModificationDate,
             kind: values.localizedTypeDescription ?? (values.isDirectory == true ? "資料夾" : "檔案"),
-            cloudAvailability: cloudAvailability(from: values)
+            cloudAvailability: cloudAvailability(from: values),
+            storedName: FileManager.default.displayName(atPath: url.path)
         )
     }
 
@@ -92,7 +96,8 @@ struct FileItem: Hashable {
                     fileSize: values.fileSize.map(Int64.init),
                     modifiedDate: values.contentModificationDate,
                     kind: values.localizedTypeDescription ?? (values.isDirectory == true ? "資料夾" : "檔案"),
-                    cloudAvailability: cloudAvailability(from: values)
+                    cloudAvailability: cloudAvailability(from: values),
+                    storedName: fileManager.displayName(atPath: url.path)
                 )
             } catch {
                 return nil
@@ -140,12 +145,20 @@ enum FileDisplayArrangement {
         from source: [FileItem],
         matching searchText: String,
         sortedBy sortOption: FileSortOption,
-        ascending: Bool
+        ascending: Bool,
+        sourceIsPresortedByNameAscending: Bool = false
     ) -> [FileItem] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let filtered = query.isEmpty
             ? source
             : source.filter { $0.name.localizedCaseInsensitiveContains(query) }
+
+        // FileItem.load() already sorts by folder-first + name ascending,
+        // and filter() preserves that order, so the default arrangement can
+        // skip a second, identical sort pass.
+        if sourceIsPresortedByNameAscending, sortOption == .name, ascending {
+            return filtered
+        }
 
         return filtered.sorted { left, right in
             if left.shouldOpenAsFolder != right.shouldOpenAsFolder {
@@ -297,6 +310,7 @@ final class FavoriteStore {
         guard let data = try? JSONEncoder().encode(entries) else { return }
         UserDefaults.standard.set(data, forKey: entriesKey)
         UserDefaults.standard.set(entries.map(\.path), forKey: defaultsKey)
+        SidebarLocationProvider.invalidateCachedLocations()
     }
 }
 
@@ -319,10 +333,12 @@ enum HiddenCloudLocationStore {
         var paths = hiddenPaths
         paths.insert(url.standardizedFileURL.path)
         UserDefaults.standard.set(Array(paths).sorted(), forKey: defaultsKey)
+        SidebarLocationProvider.invalidateCachedLocations()
     }
 
     static func unhideAll() {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
+        SidebarLocationProvider.invalidateCachedLocations()
     }
 }
 
@@ -347,9 +363,36 @@ enum SidebarLocationProvider {
         .volumeLocalizedNameKey
     ]
 
+    // 側邊欄掃描（收藏、雲端資料夾、外置硬碟）成本唔低，而且喺每次
+    // 目錄 reload 都會被呼叫。只有收藏、隱藏設定或硬碟有變時先需要重掃，
+    // 所以結果喺度快取，相關改動會透過 invalidateCachedLocations() 失效。
+    private static var cachedLocations: [SidebarLocation]?
+
+    static func invalidateCachedLocations() {
+        cachedLocations = nil
+    }
+
     static func locations(
         fileManager: FileManager = .default,
         mountedVolumes: [MountedVolumeDescriptor]? = nil
+    ) -> [SidebarLocation] {
+        if mountedVolumes == nil, let cachedLocations {
+            return cachedLocations
+        }
+
+        let result = buildLocations(
+            fileManager: fileManager,
+            mountedVolumes: mountedVolumes
+        )
+        if mountedVolumes == nil {
+            cachedLocations = result
+        }
+        return result
+    }
+
+    private static func buildLocations(
+        fileManager: FileManager,
+        mountedVolumes: [MountedVolumeDescriptor]?
     ) -> [SidebarLocation] {
         let home = fileManager.homeDirectoryForCurrentUser
         var locations: [SidebarLocation] = [

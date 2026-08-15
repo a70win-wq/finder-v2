@@ -338,4 +338,131 @@ struct FileLogicTests {
             #expect(FileManager.default.fileExists(atPath: source.path))
         }
     }
+
+    @Test("載入時一次過計好顯示名稱")
+    func loadStoresDisplayNameOnce() throws {
+        try withTemporaryDirectory { temporaryDirectory in
+            let file = temporaryDirectory.appendingPathComponent("測試.txt")
+            try Data("hello".utf8).write(to: file)
+
+            let items = try FileItem.load(from: temporaryDirectory)
+            let item = try #require(items.first { $0.url.lastPathComponent == "測試.txt" })
+
+            #expect(item.name == "測試.txt")
+            #expect(item.storedName == "測試.txt")
+        }
+    }
+
+    @Test("已按名稱排序嘅來源可以跳過第二次排序")
+    func presortedSourceSkipsSecondSortPass() {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FinderV2Presort", isDirectory: true)
+        func makeItem(_ name: String, isDirectory: Bool = false) -> FileItem {
+            FileItem(
+                url: base.appendingPathComponent(name),
+                isDirectory: isDirectory,
+                isPackage: false,
+                fileSize: 1,
+                modifiedDate: Date(timeIntervalSince1970: 100),
+                kind: "檔案"
+            )
+        }
+        let unsorted: [FileItem] = [
+            makeItem("Bravo.txt"),
+            makeItem("Alpha.txt"),
+            makeItem("Zzz 資料夾", isDirectory: true)
+        ]
+
+        // 聲稱已經排好：原樣保留，唔再排多次
+        let withFlag = FileDisplayArrangement.items(
+            from: unsorted,
+            matching: "",
+            sortedBy: .name,
+            ascending: true,
+            sourceIsPresortedByNameAscending: true
+        )
+        #expect(withFlag.map(\.name) == ["Bravo.txt", "Alpha.txt", "Zzz 資料夾"])
+
+        // 冇聲稱：照常排序（資料夾在前、名稱升序）
+        let withoutFlag = FileDisplayArrangement.items(
+            from: unsorted,
+            matching: "",
+            sortedBy: .name,
+            ascending: true
+        )
+        #expect(withoutFlag.map(\.name) == ["Zzz 資料夾", "Alpha.txt", "Bravo.txt"])
+    }
+
+    @Test("收藏改動會令側邊欄快取失效")
+    func sidebarCacheInvalidatesWhenFavoritesChange() throws {
+        let entriesKey = "FinderV2FavoriteEntriesV2"
+        let legacyKey = "FinderV2FavoriteFolders"
+        let previousEntries = UserDefaults.standard.object(forKey: entriesKey)
+        let previousLegacy = UserDefaults.standard.object(forKey: legacyKey)
+        defer {
+            if let previousEntries {
+                UserDefaults.standard.set(previousEntries, forKey: entriesKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: entriesKey)
+            }
+            if let previousLegacy {
+                UserDefaults.standard.set(previousLegacy, forKey: legacyKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: legacyKey)
+            }
+            SidebarLocationProvider.invalidateCachedLocations()
+        }
+        UserDefaults.standard.removeObject(forKey: entriesKey)
+        UserDefaults.standard.removeObject(forKey: legacyKey)
+        SidebarLocationProvider.invalidateCachedLocations()
+
+        let before = SidebarLocationProvider.locations()
+        #expect(!before.contains { $0.isFavorite })
+
+        try withTemporaryDirectory { temporaryDirectory in
+            FavoriteStore.shared.add(temporaryDirectory)
+
+            let after = SidebarLocationProvider.locations()
+            #expect(
+                after.contains {
+                    $0.url.standardizedFileURL == temporaryDirectory.standardizedFileURL
+                }
+            )
+        }
+    }
+
+    @Test("重複載入相同內容唔會整亂清單")
+    @MainActor
+    func reloadingIdenticalItemsKeepsTableInSync() throws {
+        let controller = FileTableViewController()
+        _ = controller.view
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FinderV2ReloadSync", isDirectory: true)
+        func makeItem(_ name: String) -> FileItem {
+            FileItem(
+                url: base.appendingPathComponent(name),
+                isDirectory: false,
+                isPackage: false,
+                fileSize: 1,
+                modifiedDate: Date(timeIntervalSince1970: 100),
+                kind: "檔案"
+            )
+        }
+        let items = [makeItem("Alpha.txt"), makeItem("Bravo.txt")]
+        let directory = URL(fileURLWithPath: "/tmp")
+
+        controller.reload(items: items, currentDirectory: directory)
+        #expect(controller.tableView.numberOfRows == items.count)
+        #expect(controller.items.count == items.count)
+
+        // 相同內容再載入：行數保持、唔會整亂
+        controller.reload(items: items, currentDirectory: directory)
+        #expect(controller.tableView.numberOfRows == items.count)
+
+        // 內容有變就正常更新
+        let updated = items + [makeItem("Charlie.png")]
+        controller.reload(items: updated, currentDirectory: directory)
+        #expect(controller.tableView.numberOfRows == updated.count)
+        #expect(controller.items.count == updated.count)
+    }
 }

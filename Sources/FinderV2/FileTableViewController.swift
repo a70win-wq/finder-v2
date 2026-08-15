@@ -121,9 +121,16 @@ private final class FileThumbnailProvider {
 
     private let cache = NSCache<NSString, NSImage>()
 
+    init() {
+        cache.countLimit = 512
+        cache.totalCostLimit = 128 * 1024 * 1024
+    }
+
     func thumbnail(for item: FileItem, size: CGSize, completion: @escaping (NSImage?) -> Void) {
+        // 大圖（例如圖庫 900×650）同細圖（例如大圖示 132×132）係唔同尺寸，
+        // key 必須包含尺寸，否則細圖會頂替大圖，圖庫會攞到張細相放大。
         let modified = item.modifiedDate?.timeIntervalSince1970 ?? 0
-        let cacheKey = "\(item.url.standardizedFileURL.path)|\(modified)" as NSString
+        let cacheKey = "\(item.url.standardizedFileURL.path)|\(modified)|\(Int(size.width))x\(Int(size.height))" as NSString
 
         if let cached = cache.object(forKey: cacheKey) {
             completion(cached)
@@ -139,8 +146,10 @@ private final class FileThumbnailProvider {
 
         QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] representation, _ in
             let image = representation?.nsImage
-            if let image {
-                self?.cache.setObject(image, forKey: cacheKey)
+            if let image, let self {
+                // 成本大約係像素數目 × 4 bytes，讓 NSCache 可以按記憶體上限淘汰。
+                let cost = max(1, Int(image.size.width * image.size.height * 4))
+                self.cache.setObject(image, forKey: cacheKey, cost: cost)
             }
             DispatchQueue.main.async {
                 completion(image)
@@ -712,8 +721,14 @@ final class FileTableViewController: NSViewController {
         let selected = Set(selectedURLs())
         let directoryChanged = self.currentDirectory?.standardizedFileURL
             != currentDirectory.standardizedFileURL
+        let itemsChanged = items != self.items
         self.items = items
         self.currentDirectory = currentDirectory
+
+        // 好多檔案系統變動（例如 .attrib event）其實內容完全冇變。
+        // 內容一樣就唔好重畫成個畫面，避免閃爍同 thumbnail 重繪。
+        guard directoryChanged || itemsChanged else { return }
+
         tableView.reloadData()
         collectionView.reloadData()
         galleryCollectionView.reloadData()

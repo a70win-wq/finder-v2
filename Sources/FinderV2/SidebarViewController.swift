@@ -145,6 +145,7 @@ final class SidebarViewController: NSViewController {
     }
 
     @objc private func mountedVolumesDidChange(_ notification: Notification) {
+        SidebarLocationProvider.invalidateCachedLocations()
         if Thread.isMainThread {
             reloadLocations()
         } else {
@@ -376,6 +377,7 @@ final class SidebarViewController: NSViewController {
         let location = locations[index]
         do {
             try NSWorkspace.shared.unmountAndEjectDevice(at: location.url)
+            SidebarLocationProvider.invalidateCachedLocations()
             reloadLocations()
         } catch {
             let alert = NSAlert()

@@ -1482,7 +1482,8 @@ final class PaneViewController: NSViewController {
             from: allItems,
             matching: searchField.stringValue,
             sortedBy: sortOption,
-            ascending: sortAscending
+            ascending: sortAscending,
+            sourceIsPresortedByNameAscending: true
         )
         fileTableController.setDisplayOptions(
             sortOption: sortOption,
