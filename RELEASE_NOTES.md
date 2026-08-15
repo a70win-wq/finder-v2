@@ -1,13 +1,40 @@
 # Finder v2.0 1.1.12
 
-整體效能優化，大型資料夾更快更順：
+## English
 
-- 側邊欄加入快取，唔會每次切換資料夾都重新掃描硬碟、雲端及收藏。
-- 檔案顯示名稱喺載入時一次過計好，大型資料夾排序明顯加快。
-- 大圖示同圖庫縮圖分開快取，唔會再互相覆蓋或攞錯尺寸。
-- 內容冇變嘅資料夾更新時唔會再重畫成個畫面，減少閃爍。
-- 加入測試保護以上優化，52 個測試全部通過。
-- 支援 Apple Silicon 及 Intel Mac。
+### Performance Optimizations
+
+This release makes Finder v2.0 feel faster and smoother, especially when working with large folders.
+
+- **Smarter sidebar caching.** The sidebar (main folders, favorites, cloud storage, external drives) is now cached. Previously it rescanned mounted volumes, cloud locations, and favorites on *every* folder reload; now it only rescans when something actually changes — you add a favorite, hide a cloud location, or plug in / eject a drive. Switching between folders no longer triggers repeated full sidebar scans.
+- **Faster sorting of large folders.** Each file's display name is now computed once when a folder is loaded, instead of being looked up from the filesystem over and over during sorting. Folders with thousands of files sort noticeably faster.
+- **Better thumbnail handling.** Icon-size and gallery-size thumbnails are now cached separately by their dimensions, so the gallery no longer picks up a small icon thumbnail and stretches it into a blurry preview. The cache is also capped (in both count and memory), so it can't grow without bound.
+- **Less flicker and redrawing.** When a folder is reloaded but its contents are unchanged (for example, a minor filesystem attribute event), the view is no longer rebuilt from scratch. The list, icons, gallery, and column view keep their scroll position and selection, with no unnecessary redraws.
+- **One less sort pass.** The default name ordering now reuses the sort already performed while loading, skipping a duplicate pass over the whole list.
+
+Quality:
+
+- All **52 tests pass**, including 4 new tests added specifically to guard each optimization above.
+- Supports **Apple Silicon and Intel Macs**.
+
+Requires macOS 14 Sonoma or later.
+
+## 中文（粵語）
+
+### 整體效能優化
+
+呢個版本令 Finder v2.0 行得更快更順，尤其係開大型資料夾嘅時候。
+
+- **側邊欄加入快取。** 以前每次切換資料夾，側邊欄（主目錄、收藏、雲端、外置硬碟）都會由頭重新掃描一次掛載嘅硬碟、雲端位置同收藏；而家只會喺真係有嘢變嗰陣先重掃——例如你加咗收藏、隱藏咗雲端位置、或者插咗／拔走咗硬碟。切換資料夾唔會再重複掃描。
+- **大型資料夾排序更快。** 每個檔案嘅顯示名稱而家喺載入資料夾嗰陣一次過計好，唔會喺排序期間重複向檔案系統查詢。成千上萬個檔案嘅資料夾排序明顯快咗。
+- **縮圖處理更好。** 大圖示尺寸同圖庫尺寸嘅縮圖而家按尺寸分開快取，圖庫唔會再攞到細縮圖嚟放大到矇查查。快取亦設咗上限（數量同記憶體），唔會無限制咁增長。
+- **減少閃爍同重畫。** 當資料夾重新載入但內容冇變（例如系統輕微掂咗檔案屬性），而家唔會由頭重建成個畫面。清單、大圖示、圖庫同直欄都會保留捲動位置同選取，唔會無謂咁重畫。
+- **少排一次序。** 預設嘅名稱排序而家重用載入時已經做咗嘅排序，唔會對成個列表再排多一次。
+
+品質：
+
+- 全部 **52 個測試通過**，包括 4 個新加入、專登保護以上每項優化嘅測試。
+- 支援 **Apple Silicon 及 Intel Mac**。
 
 需要 macOS 14 Sonoma 或更新版本。
 
