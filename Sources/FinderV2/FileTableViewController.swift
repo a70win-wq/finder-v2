@@ -55,6 +55,62 @@ struct FileContextMenuPlanItem: Equatable {
     }
 }
 
+enum FileDragSupport {
+    static func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        let fileOnly: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true
+        ]
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: fileOnly) as? [URL],
+           !urls.isEmpty {
+            return urls
+        }
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            let files = urls.filter(\.isFileURL)
+            if !files.isEmpty { return files }
+        }
+        if let paths = pasteboard.propertyList(
+            forType: NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        ) as? [String] {
+            return paths.map { URL(fileURLWithPath: $0) }
+        }
+        return []
+    }
+
+    static func writeFileURLs(_ urls: [URL], to pasteboard: NSPasteboard) -> Bool {
+        guard !urls.isEmpty else { return false }
+        pasteboard.clearContents()
+        return pasteboard.writeObjects(urls as [NSURL])
+    }
+
+    static func dropDestination(
+        items: [FileItem],
+        row: Int,
+        dropOntoItem: Bool,
+        currentDirectory: URL?
+    ) -> URL? {
+        if dropOntoItem,
+           row >= 0,
+           row < items.count,
+           items[row].shouldOpenAsFolder {
+            return items[row].url
+        }
+        return currentDirectory
+    }
+
+    static func draggingRows(from dragged: IndexSet, selected: IndexSet) -> IndexSet {
+        guard let first = dragged.first, selected.contains(first) else {
+            return dragged
+        }
+        return selected
+    }
+
+    static func draggingURLs(from items: [FileItem], rows: IndexSet) -> [URL] {
+        rows.sorted().compactMap { row in
+            items.indices.contains(row) ? items[row].url : nil
+        }
+    }
+}
+
 struct FileContextMenuPlan: Equatable {
     let items: [FileContextMenuPlanItem]
 
@@ -578,6 +634,8 @@ final class FileTableViewController: NSViewController {
         browser.hasHorizontalScroller = true
         browser.autohidesScroller = true
         browser.registerForDraggedTypes([.fileURL])
+        browser.setDraggingSourceOperationMask([.move, .copy], forLocal: true)
+        browser.setDraggingSourceOperationMask([.copy], forLocal: false)
         browser.separatesColumns = true
         browser.minColumnWidth = 180
         browser.maxVisibleColumns = 4
@@ -905,6 +963,17 @@ final class FileTableViewController: NSViewController {
         tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     }
 
+    var browserSupportsDraggingSourceForTesting: Bool {
+        browser.delegate != nil
+            && (self as NSBrowserDelegate).responds(
+                to: #selector(NSBrowserDelegate.browser(_:writeRowsWith:inColumn:to:))
+            )
+    }
+
+    var browserAcceptsFileURLDropsForTesting: Bool {
+        browser.registeredDraggedTypes.contains(.fileURL)
+    }
+
     func contextMenuTitlesForTesting(clipboardHasFiles: Bool) -> [String] {
         let menu = contextMenuForTesting(clipboardHasFiles: clipboardHasFiles)
         return menu.items.map { item in
@@ -1212,22 +1281,16 @@ final class FileTableViewController: NSViewController {
     }
 
     private func draggedURLs(from draggingInfo: NSDraggingInfo) -> [URL] {
-        let options: [NSPasteboard.ReadingOptionKey: Any] = [
-            .urlReadingFileURLsOnly: true
-        ]
-        return (draggingInfo.draggingPasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: options
-        ) as? [URL]) ?? []
+        FileDragSupport.fileURLs(from: draggingInfo.draggingPasteboard)
     }
 
-    private func destination(for proposedRow: Int) -> URL? {
-        if proposedRow >= 0,
-           proposedRow < items.count,
-           items[proposedRow].shouldOpenAsFolder {
-            return items[proposedRow].url
-        }
-        return currentDirectory
+    private func destination(for proposedRow: Int, dropOntoItem: Bool = true) -> URL? {
+        FileDragSupport.dropDestination(
+            items: items,
+            row: proposedRow,
+            dropOntoItem: dropOntoItem,
+            currentDirectory: currentDirectory
+        )
     }
 
     private func plainCell(identifier: NSUserInterfaceItemIdentifier, text: String) -> NSTableCellView {
@@ -1498,12 +1561,21 @@ extension FileTableViewController: NSCollectionViewDataSource, NSCollectionViewD
     ) -> NSDragOperation {
         let indexPath = proposedIndexPath.pointee as IndexPath
         let row = indexPath.item
+        let dropOntoItem = row < items.count && items[row].shouldOpenAsFolder
+        dropOperation.pointee = dropOntoItem ? .on : .before
         guard !draggedURLs(from: draggingInfo).isEmpty,
-              destination(for: row) != nil else {
+              destination(for: row, dropOntoItem: dropOntoItem) != nil else {
             return []
         }
-        dropOperation.pointee = row < items.count && items[row].shouldOpenAsFolder ? .on : .before
         return dragOperation() == .copy ? .copy : .move
+    }
+
+    func collectionView(
+        _ collectionView: NSCollectionView,
+        canDragItemsAt indexPaths: Set<IndexPath>,
+        with event: NSEvent
+    ) -> Bool {
+        !indexPaths.isEmpty
     }
 
     func collectionView(
@@ -1512,7 +1584,10 @@ extension FileTableViewController: NSCollectionViewDataSource, NSCollectionViewD
         indexPath: IndexPath,
         dropOperation: NSCollectionView.DropOperation
     ) -> Bool {
-        guard let destination = destination(for: indexPath.item) else { return false }
+        guard let destination = destination(
+            for: indexPath.item,
+            dropOntoItem: dropOperation == .on
+        ) else { return false }
         let urls = draggedURLs(from: draggingInfo)
         guard !urls.isEmpty else { return false }
         delegate?.fileTable(
@@ -1585,6 +1660,27 @@ extension FileTableViewController: NSBrowserDelegate {
     }
 
     func browser(
+        _ sender: NSBrowser,
+        canDragRowsWith rowIndexes: IndexSet,
+        inColumn column: Int,
+        with event: NSEvent
+    ) -> Bool {
+        !browserDraggingURLs(in: sender, rows: rowIndexes, column: column).isEmpty
+    }
+
+    func browser(
+        _ sender: NSBrowser,
+        writeRowsWith rowIndexes: IndexSet,
+        inColumn column: Int,
+        to pasteboard: NSPasteboard
+    ) -> Bool {
+        FileDragSupport.writeFileURLs(
+            browserDraggingURLs(in: sender, rows: rowIndexes, column: column),
+            to: pasteboard
+        )
+    }
+
+    func browser(
         _ browser: NSBrowser,
         validateDrop info: NSDraggingInfo,
         proposedRow row: UnsafeMutablePointer<Int>,
@@ -1639,6 +1735,28 @@ extension FileTableViewController: NSBrowserDelegate {
             operation: dragOperation()
         )
         return true
+    }
+
+    private func browserDraggingURLs(
+        in browser: NSBrowser,
+        rows: IndexSet,
+        column: Int
+    ) -> [URL] {
+        let parentItems: [FileItem]
+        if let parent = (browser.parentForItems(inColumn: column) as? NSURL) as URL? {
+            parentItems = browserItems(in: parent)
+        } else {
+            parentItems = items
+        }
+        let selected = browser.selectedRowIndexes(inColumn: column) ?? []
+        let effectiveRows = FileDragSupport.draggingRows(from: rows, selected: selected)
+        let fromList = FileDragSupport.draggingURLs(from: parentItems, rows: effectiveRows)
+        if !fromList.isEmpty {
+            return fromList
+        }
+        return effectiveRows.compactMap { row in
+            (browser.item(atRow: row, inColumn: column) as? NSURL) as URL?
+        }
     }
 
     private func browserItem(atRow row: Int, column: Int) -> FileItem? {

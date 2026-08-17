@@ -171,13 +171,7 @@ final class SidebarViewController: NSViewController {
     }
 
     private func draggedURLs(from draggingInfo: NSDraggingInfo) -> [URL] {
-        let options: [NSPasteboard.ReadingOptionKey: Any] = [
-            .urlReadingFileURLsOnly: true
-        ]
-        return (draggingInfo.draggingPasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: options
-        ) as? [URL]) ?? []
+        FileDragSupport.fileURLs(from: draggingInfo.draggingPasteboard)
     }
 
     private func areFolders(_ urls: [URL]) -> Bool {
