@@ -80,7 +80,7 @@ final class FolderAccessStore {
             }
         }
 
-        if refreshed.count != stored.count {
+        if refreshed != stored {
             UserDefaults.standard.set(refreshed, forKey: defaultsKey)
         }
     }

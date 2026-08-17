@@ -13,6 +13,11 @@ struct FinderTag: CaseIterable, Hashable {
     static let purple = FinderTag(title: "紫色", colorNumber: 3, color: .systemPurple)
     static let grey = FinderTag(title: "灰色", colorNumber: 1, color: .systemGray)
 
+    /// 介面顯示用嘅名稱（會跟語言翻譯）；`title` 本身保持穩定，寫入 metadata 用。
+    var displayTitle: String {
+        L(title)
+    }
+
     static let allCases: [FinderTag] = [
         .red,
         .orange,
@@ -81,7 +86,7 @@ enum FileTagEngine {
         guard process.terminationStatus == 0 else {
             let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             let message = String(data: errorData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? "標籤操作失敗"
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? L("標籤操作失敗")
             throw NSError(
                 domain: "FinderV2.FileTagEngine",
                 code: Int(process.terminationStatus),

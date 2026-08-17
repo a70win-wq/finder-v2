@@ -50,15 +50,15 @@ enum PaneLayout: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .sideBySide: return "左右雙開"
-        case .stacked: return "上下雙開"
-        case .threeLeft: return "三開：左一右二"
-        case .threeRight: return "三開：左二右一"
-        case .threeTop: return "三開：上一下二"
-        case .threeBottom: return "三開：上二下一"
-        case .fourGrid: return "四開：四格"
-        case .fourColumns: return "四開：左右四欄"
-        case .fourRows: return "四開：上下四列"
+        case .sideBySide: return L("左右雙開")
+        case .stacked: return L("上下雙開")
+        case .threeLeft: return L("三開：左一右二")
+        case .threeRight: return L("三開：左二右一")
+        case .threeTop: return L("三開：上一下二")
+        case .threeBottom: return L("三開：上二下一")
+        case .fourGrid: return L("四開：四格")
+        case .fourColumns: return L("四開：左右四欄")
+        case .fourRows: return L("四開：上下四列")
         }
     }
 
@@ -102,6 +102,10 @@ final class MainViewController: NSViewController {
     private let layoutContainer = NSView()
     private let layoutPopUp = NSPopUpButton()
     private let comparisonLabel = NSTextField(labelWithString: "")
+    private let compareButton = NSButton(title: L("比較 1／2"), target: nil, action: #selector(compareFolders))
+    private let syncRightButton = NSButton(title: L("1 → 2"), target: nil, action: #selector(syncLeftToRight))
+    private let syncLeftButton = NSButton(title: L("2 → 1"), target: nil, action: #selector(syncRightToLeft))
+    private let jobsButton = NSButton(title: L("工作清單"), target: nil, action: #selector(showTransferJobs))
 
     var visiblePaneCount: Int { visiblePanes.count }
 
@@ -122,15 +126,14 @@ final class MainViewController: NSViewController {
         root.addSubview(toolsBar)
 
         configureLayoutPopUp()
-
-        let compareButton = NSButton(title: "比較 1／2", target: self, action: #selector(compareFolders))
-        styleToolbarButton(compareButton, symbol: "rectangle.split.2x1", tooltip: "比較第 1 格同第 2 格")
-        let syncRightButton = NSButton(title: "1 → 2", target: self, action: #selector(syncLeftToRight))
-        styleToolbarButton(syncRightButton, symbol: "arrow.right.circle", tooltip: "同步第 1 格到第 2 格")
-        let syncLeftButton = NSButton(title: "2 → 1", target: self, action: #selector(syncRightToLeft))
-        styleToolbarButton(syncLeftButton, symbol: "arrow.left.circle", tooltip: "同步第 2 格到第 1 格")
-        let jobsButton = NSButton(title: "工作清單", target: self, action: #selector(showTransferJobs))
-        styleToolbarButton(jobsButton, symbol: "list.bullet.rectangle", tooltip: "搬檔工作清單")
+        compareButton.target = self
+        syncRightButton.target = self
+        syncLeftButton.target = self
+        jobsButton.target = self
+        styleToolbarButton(compareButton, symbol: "rectangle.split.2x1", tooltip: L("比較第 1 格同第 2 格"))
+        styleToolbarButton(syncRightButton, symbol: "arrow.right.circle", tooltip: L("同步第 1 格到第 2 格"))
+        styleToolbarButton(syncLeftButton, symbol: "arrow.left.circle", tooltip: L("同步第 2 格到第 1 格"))
+        styleToolbarButton(jobsButton, symbol: "list.bullet.rectangle", tooltip: L("搬檔工作清單"))
 
         let tools = NSStackView(
             views: [
@@ -178,11 +181,38 @@ final class MainViewController: NSViewController {
             layoutContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         ])
         self.view = root
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageChanged),
+            name: .finderV2LanguageChanged,
+            object: nil
+        )
 
         let savedRawValue = UserDefaults.standard.integer(forKey: Self.layoutDefaultsKey)
         currentLayout = PaneLayout(rawValue: savedRawValue) ?? .sideBySide
         layoutPopUp.selectItem(at: currentLayout.rawValue)
         applyLayout(currentLayout)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func languageChanged() {
+        let selectedLayout = currentLayout
+        configureLayoutPopUp()
+        layoutPopUp.selectItem(at: selectedLayout.rawValue)
+        compareButton.title = L("比較 1／2")
+        syncRightButton.title = L("1 → 2")
+        syncLeftButton.title = L("2 → 1")
+        jobsButton.title = L("工作清單")
+        styleToolbarButton(compareButton, symbol: "rectangle.split.2x1", tooltip: L("比較第 1 格同第 2 格"))
+        styleToolbarButton(syncRightButton, symbol: "arrow.right.circle", tooltip: L("同步第 1 格到第 2 格"))
+        styleToolbarButton(syncLeftButton, symbol: "arrow.left.circle", tooltip: L("同步第 2 格到第 1 格"))
+        styleToolbarButton(jobsButton, symbol: "list.bullet.rectangle", tooltip: L("搬檔工作清單"))
+        if !comparisonLabel.stringValue.isEmpty {
+            comparisonLabel.stringValue = L("藍色：只在一邊 · 橙色：版本唔同 · 灰色：一樣")
+        }
     }
 
     @objc func compareFolders() {
@@ -192,18 +222,19 @@ final class MainViewController: NSViewController {
         )
         leftPane.showComparison(result.left)
         rightPane.showComparison(result.right)
-        comparisonLabel.stringValue = "藍色：只在一邊 · 橙色：版本唔同 · 灰色：一樣"
+        comparisonLabel.stringValue = L("藍色：只在一邊 · 橙色：版本唔同 · 灰色：一樣")
 
         let alert = NSAlert()
-        alert.messageText = "比較完成"
-        alert.informativeText = """
-        第 1 格獨有：\(result.leftOnlyCount) 個
-        第 2 格獨有：\(result.rightOnlyCount) 個
-        版本唔同：\(result.differentCount) 個
-        完全一樣：\(result.sameCount) 個
-        """
-        alert.addButton(withTitle: "知道")
-        alert.addButton(withTitle: "清除顏色")
+        alert.messageText = L("比較完成")
+        alert.informativeText = String(
+            format: L("第 1 格獨有：%ld 個\n第 2 格獨有：%ld 個\n版本唔同：%ld 個\n完全一樣：%ld 個"),
+            result.leftOnlyCount,
+            result.rightOnlyCount,
+            result.differentCount,
+            result.sameCount
+        )
+        alert.addButton(withTitle: L("知道"))
+        alert.addButton(withTitle: L("清除顏色"))
         if alert.runModal() == .alertSecondButtonReturn {
             leftPane.clearComparison()
             rightPane.clearComparison()
@@ -212,11 +243,11 @@ final class MainViewController: NSViewController {
     }
 
     @objc func syncLeftToRight() {
-        offerSync(from: leftPane, to: rightPane, direction: "第 1 格 → 第 2 格")
+        offerSync(from: leftPane, to: rightPane, direction: L("第 1 格 → 第 2 格"))
     }
 
     @objc func syncRightToLeft() {
-        offerSync(from: rightPane, to: leftPane, direction: "第 2 格 → 第 1 格")
+        offerSync(from: rightPane, to: leftPane, direction: L("第 2 格 → 第 1 格"))
     }
 
     @objc func showTransferJobs() {
@@ -230,32 +261,32 @@ final class MainViewController: NSViewController {
     ) {
         guard sourcePane.currentDirectory.standardizedFileURL
             != destinationPane.currentDirectory.standardizedFileURL else {
-            showMessage(title: "兩邊係同一個資料夾", message: "唔需要同步。")
+            showMessage(title: L("兩邊係同一個資料夾"), message: L("唔需要同步。"))
             return
         }
-        let sources = FolderComparisonEngine.syncSources(
+        let operations = FolderComparisonEngine.syncOperations(
             from: sourcePane.currentItems,
-            to: destinationPane.currentItems
+            to: destinationPane.currentItems,
+            destinationFolder: destinationPane.currentDirectory
         )
-        guard !sources.isEmpty else {
-            showMessage(title: "已經一樣", message: "冇檔案需要同步。")
+        guard !operations.isEmpty else {
+            showMessage(title: L("已經一樣"), message: L("冇檔案需要同步。"))
             return
         }
-        let sample = sources.prefix(8).map(\.lastPathComponent).joined(separator: "\n")
+        let sample = operations.prefix(8).map(\.source.lastPathComponent).joined(separator: "\n")
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "同步 \(direction)？"
-        alert.informativeText = """
-        會複製 \(sources.count) 個較新或右邊未有嘅項目。
-        同名舊版本會放入垃圾桶後取代。
-
-        \(sample)\(sources.count > 8 ? "\n…" : "")
-        """
-        alert.addButton(withTitle: "開始同步")
-        alert.addButton(withTitle: "取消")
+        alert.messageText = String(format: L("同步 %@？"), direction)
+        alert.informativeText = String(
+            format: L("會複製 %ld 個較新或右邊未有嘅項目。\n同名舊版本會放入垃圾桶後取代。\n\n%@"),
+            operations.count,
+            sample + (operations.count > 8 ? "\n…" : "")
+        )
+        alert.addButton(withTitle: L("開始同步"))
+        alert.addButton(withTitle: L("取消"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        sourcePane.copyForSync(sources, to: destinationPane.currentDirectory) { [weak self] in
-            self?.comparisonLabel.stringValue = "同步完成；可以再按「比較左右」查看最新結果"
+        sourcePane.copyForSync(operations) { [weak self] in
+            self?.comparisonLabel.stringValue = L("同步完成；可以再按「比較左右」查看最新結果")
         }
         showTransferJobs()
     }
@@ -264,7 +295,7 @@ final class MainViewController: NSViewController {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        alert.addButton(withTitle: "知道")
+        alert.addButton(withTitle: L("知道"))
         alert.runModal()
     }
 
@@ -298,7 +329,11 @@ final class MainViewController: NSViewController {
         rightPane = panes[1]
         panes.forEach { pane in
             pane.didActivate = { [weak self] activatedPane in
-                self?.activate(activatedPane)
+                guard let self,
+                      self.visiblePanes.contains(where: { $0 === activatedPane }) else {
+                    return
+                }
+                self.activate(activatedPane)
             }
         }
     }
@@ -314,7 +349,7 @@ final class MainViewController: NSViewController {
         }
         layoutPopUp.target = self
         layoutPopUp.action = #selector(layoutChanged)
-        layoutPopUp.toolTip = "選擇雙開、三開或四開版面"
+        layoutPopUp.toolTip = L("選擇雙開、三開或四開版面")
         layoutPopUp.bezelStyle = .accessoryBarAction
         layoutPopUp.controlSize = .regular
         layoutPopUp.font = .systemFont(ofSize: 12, weight: .medium)
@@ -439,6 +474,9 @@ final class MainViewController: NSViewController {
             controller.view.bottomAnchor.constraint(equalTo: layoutContainer.bottomAnchor)
         ])
         lockEqualSplitRatiosRecursively(controller)
+        for pane in panes {
+            pane.setMonitoringEnabled(visiblePanes.contains(where: { $0 === pane }))
+        }
         activate(visiblePanes[0])
 
         layoutContainer.needsLayout = true

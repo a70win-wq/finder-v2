@@ -10,10 +10,10 @@ enum FileViewMode: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .list: return "清單"
-        case .icons: return "大圖示"
-        case .columns: return "直欄"
-        case .gallery: return "圖庫"
+        case .list: return L("清單")
+        case .icons: return L("大圖示")
+        case .columns: return L("直欄")
+        case .gallery: return L("圖庫")
         }
     }
 }
@@ -217,9 +217,19 @@ private final class FileIconCollectionItem: NSCollectionViewItem {
         textField?.stringValue = ""
     }
 
-    func configure(with item: FileItem) {
+    func configure(with item: FileItem, comparison: FolderComparisonState? = nil) {
         representedFileURL = item.url.standardizedFileURL
         textField?.stringValue = item.name
+        switch comparison {
+        case .onlyHere:
+            textField?.textColor = .systemBlue
+        case .different:
+            textField?.textColor = .systemOrange
+        case .same:
+            textField?.textColor = .secondaryLabelColor
+        case nil:
+            textField?.textColor = .labelColor
+        }
         imageView?.image = NSWorkspace.shared.icon(forFile: item.url.path)
         imageView?.imageFrameStyle = .none
 
@@ -451,10 +461,10 @@ final class FileTableViewController: NSViewController {
         root.wantsLayer = true
         root.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
 
-        addColumn(identifier: Column.name, title: "名稱", width: 235, minWidth: 140)
-        addColumn(identifier: Column.size, title: "大小", width: 90, minWidth: 70)
-        addColumn(identifier: Column.kind, title: "種類", width: 125, minWidth: 90)
-        addColumn(identifier: Column.modified, title: "修改日期", width: 140, minWidth: 115)
+        addColumn(identifier: Column.name, title: L("名稱"), width: 235, minWidth: 140)
+        addColumn(identifier: Column.size, title: L("大小"), width: 90, minWidth: 70)
+        addColumn(identifier: Column.kind, title: L("種類"), width: 125, minWidth: 90)
+        addColumn(identifier: Column.modified, title: L("修改日期"), width: 140, minWidth: 115)
 
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.style = .plain
@@ -715,10 +725,36 @@ final class FileTableViewController: NSViewController {
         ])
 
         self.view = root
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageChanged),
+            name: .finderV2LanguageChanged,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func applyLocalization() {
+        tableView.tableColumn(withIdentifier: Column.name)?.title = L("名稱")
+        tableView.tableColumn(withIdentifier: Column.size)?.title = L("大小")
+        tableView.tableColumn(withIdentifier: Column.kind)?.title = L("種類")
+        tableView.tableColumn(withIdentifier: Column.modified)?.title = L("修改日期")
+        tableView.reloadData()
+        collectionView.reloadData()
+        galleryCollectionView.reloadData()
+        updateGalleryPreview()
+    }
+
+    @objc private func languageChanged() {
+        applyLocalization()
     }
 
     func reload(items: [FileItem], currentDirectory: URL) {
-        let selected = Set(selectedURLs())
+        let selected = Set(selectedURLs().map { $0.standardizedFileURL.path })
+        let browserSelection = viewMode == .columns ? browser.selectionIndexPaths : []
         let directoryChanged = self.currentDirectory?.standardizedFileURL
             != currentDirectory.standardizedFileURL
         let itemsChanged = items != self.items
@@ -743,11 +779,16 @@ final class FileTableViewController: NSViewController {
                 column += 1
             }
             browser.validateVisibleColumns()
+            if !browserSelection.isEmpty {
+                browser.selectionIndexPaths = browserSelection
+            }
         } else {
             browser.loadColumnZero()
         }
 
-        let indexes = IndexSet(items.indices.filter { selected.contains(items[$0].url) })
+        let indexes = IndexSet(items.indices.filter {
+            selected.contains(items[$0].url.standardizedFileURL.path)
+        })
         tableView.selectRowIndexes(indexes, byExtendingSelection: false)
         collectionView.selectionIndexPaths = Set(
             indexes.map { IndexPath(item: $0, section: 0) }
@@ -1222,16 +1263,16 @@ final class FileTableViewController: NSViewController {
             return
         }
 
-        switch comparisonStates[item.name] {
+        switch comparisonStates[item.fileSystemName] {
         case .onlyHere:
             cell.textField?.textColor = .systemBlue
-            cell.textField?.toolTip = "只在呢邊"
+            cell.textField?.toolTip = L("只在呢邊")
         case .different:
             cell.textField?.textColor = .systemOrange
-            cell.textField?.toolTip = "兩邊版本唔同"
+            cell.textField?.toolTip = L("兩邊版本唔同")
         case .same:
             cell.textField?.textColor = .secondaryLabelColor
-            cell.textField?.toolTip = "兩邊一樣"
+            cell.textField?.toolTip = L("兩邊一樣")
         case nil:
             cell.textField?.textColor = .labelColor
             cell.textField?.toolTip = nil
@@ -1324,7 +1365,7 @@ extension FileTableViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let identifier = tableColumn?.identifier else { return nil }
+        guard row >= 0, row < items.count, let identifier = tableColumn?.identifier else { return nil }
         let item = items[row]
         switch identifier {
         case Column.name:
@@ -1424,7 +1465,10 @@ extension FileTableViewController: NSCollectionViewDataSource, NSCollectionViewD
               indexPath.item < items.count else {
             return item
         }
-        iconItem.configure(with: items[indexPath.item])
+        iconItem.configure(
+            with: items[indexPath.item],
+            comparison: comparisonStates[items[indexPath.item].fileSystemName]
+        )
         return iconItem
     }
 
@@ -1632,7 +1676,10 @@ extension FileTableViewController: NSBrowserDelegate {
         if let cached = browserItemsCache[standardized] {
             return cached
         }
-        let loaded = (try? FileItem.load(from: standardized)) ?? []
+        let loaded = (try? FileItem.load(
+            from: standardized,
+            showHidden: currentlyShowsHiddenFiles
+        )) ?? []
         browserItemsCache[standardized] = loaded
         return loaded
     }
@@ -1665,7 +1712,7 @@ extension FileTableViewController: NSMenuDelegate {
             case .newFolder:
                 addMenuItem(
                     to: menu,
-                    title: "新增資料夾",
+                    title: L("新增資料夾"),
                     action: #selector(menuNewFolder),
                     keyEquivalent: "n",
                     modifiers: [.command, .shift]
@@ -1674,7 +1721,7 @@ extension FileTableViewController: NSMenuDelegate {
             case .paste:
                 addMenuItem(
                     to: menu,
-                    title: "貼上項目",
+                    title: L("貼上項目"),
                     action: #selector(menuPaste),
                     keyEquivalent: "v",
                     modifiers: [.command],
@@ -1685,20 +1732,20 @@ extension FileTableViewController: NSMenuDelegate {
                 addSubmenu(
                     makeViewModeMenu(),
                     to: menu,
-                    title: "顯示方式"
+                    title: L("顯示方式")
                 )
 
             case .sort:
                 addSubmenu(
                     makeSortMenu(),
                     to: menu,
-                    title: "排列方式"
+                    title: L("排列方式")
                 )
 
             case .showViewOptions:
                 addMenuItem(
                     to: menu,
-                    title: "顯示選項…",
+                    title: L("顯示選項…"),
                     action: #selector(menuShowViewOptions),
                     keyEquivalent: "j",
                     modifiers: [.command]
@@ -1707,7 +1754,7 @@ extension FileTableViewController: NSMenuDelegate {
             case .toggleHiddenFiles:
                 addMenuItem(
                     to: menu,
-                    title: currentlyShowsHiddenFiles ? "隱藏隱藏檔案" : "顯示隱藏檔案",
+                    title: currentlyShowsHiddenFiles ? L("隱藏隱藏檔案") : L("顯示隱藏檔案"),
                     action: #selector(menuToggleHiddenFiles),
                     keyEquivalent: ".",
                     modifiers: [.command, .shift]
@@ -1716,14 +1763,16 @@ extension FileTableViewController: NSMenuDelegate {
             case .folderWithSelection:
                 addMenuItem(
                     to: menu,
-                    title: "新增包含所選 \(selected.count) 個項目的資料夾",
+                    title: String(format: L("新增包含所選 %ld 個項目的資料夾"), selected.count),
                     action: #selector(menuFolderWithSelection),
                     keyEquivalent: "n",
                     modifiers: [.command, .control]
                 )
 
             case .open:
-                let title = selected.count == 1 ? "開啟" : "開啟 \(selected.count) 個項目"
+                let title = selected.count == 1
+                    ? L("開啟")
+                    : String(format: L("開啟 %ld 個項目"), selected.count)
                 addMenuItem(
                     to: menu,
                     title: title,
@@ -1736,13 +1785,13 @@ extension FileTableViewController: NSMenuDelegate {
                 addSubmenu(
                     makeOpenWithMenu(for: selected.map(\.url)),
                     to: menu,
-                    title: "打開檔案的應用程式"
+                    title: L("打開檔案的應用程式")
                 )
 
             case .trash:
                 addMenuItem(
                     to: menu,
-                    title: "丟到垃圾桶",
+                    title: L("丟到垃圾桶"),
                     action: #selector(menuTrash),
                     keyEquivalent: "\u{8}",
                     modifiers: [.command]
@@ -1751,7 +1800,7 @@ extension FileTableViewController: NSMenuDelegate {
             case .info:
                 addMenuItem(
                     to: menu,
-                    title: "取得資料",
+                    title: L("取得資料"),
                     action: #selector(menuInfo),
                     keyEquivalent: "i",
                     modifiers: [.command]
@@ -1761,8 +1810,8 @@ extension FileTableViewController: NSMenuDelegate {
                 addMenuItem(
                     to: menu,
                     title: selected.count == 1
-                        ? "重新命名…"
-                        : "重新命名 \(selected.count) 個項目…",
+                        ? L("重新命名…")
+                        : String(format: L("重新命名 %ld 個項目…"), selected.count),
                     action: selected.count == 1
                         ? #selector(menuRename)
                         : #selector(menuBatchRename),
@@ -1773,14 +1822,18 @@ extension FileTableViewController: NSMenuDelegate {
             case .compress:
                 addMenuItem(
                     to: menu,
-                    title: selected.count == 1 ? "壓縮" : "壓縮 \(selected.count) 個項目",
+                    title: selected.count == 1
+                        ? L("壓縮")
+                        : String(format: L("壓縮 %ld 個項目"), selected.count),
                     action: #selector(menuCreateZip)
                 )
 
             case .duplicate:
                 addMenuItem(
                     to: menu,
-                    title: selected.count == 1 ? "複製" : "複製 \(selected.count) 個項目",
+                    title: selected.count == 1
+                        ? L("製作副本")
+                        : String(format: L("製作 %ld 個副本"), selected.count),
                     action: #selector(menuDuplicate),
                     keyEquivalent: "d",
                     modifiers: [.command]
@@ -1789,7 +1842,9 @@ extension FileTableViewController: NSMenuDelegate {
             case .alias:
                 addMenuItem(
                     to: menu,
-                    title: selected.count == 1 ? "製作替身" : "製作 \(selected.count) 個替身",
+                    title: selected.count == 1
+                        ? L("製作替身")
+                        : String(format: L("製作 %ld 個替身"), selected.count),
                     action: #selector(menuAlias),
                     keyEquivalent: "l",
                     modifiers: [.command]
@@ -1798,7 +1853,9 @@ extension FileTableViewController: NSMenuDelegate {
             case .preview:
                 addMenuItem(
                     to: menu,
-                    title: selected.count == 1 ? "快速查看" : "快速查看 \(selected.count) 個項目",
+                    title: selected.count == 1
+                        ? L("快速查看")
+                        : String(format: L("快速查看 %ld 個項目"), selected.count),
                     action: #selector(menuPreview),
                     keyEquivalent: " ",
                     modifiers: []
@@ -1807,7 +1864,9 @@ extension FileTableViewController: NSMenuDelegate {
             case .copy:
                 addMenuItem(
                     to: menu,
-                    title: selected.count == 1 ? "拷貝" : "拷貝 \(selected.count) 個項目",
+                    title: selected.count == 1
+                        ? L("拷貝")
+                        : String(format: L("拷貝 %ld 個項目"), selected.count),
                     action: #selector(menuCopy),
                     keyEquivalent: "c",
                     modifiers: [.command]
@@ -1816,7 +1875,7 @@ extension FileTableViewController: NSMenuDelegate {
             case .share:
                 addMenuItem(
                     to: menu,
-                    title: "分享…",
+                    title: L("分享…"),
                     action: #selector(menuShare)
                 )
 
@@ -1824,27 +1883,27 @@ extension FileTableViewController: NSMenuDelegate {
                 addSubmenu(
                     makeTagsMenu(),
                     to: menu,
-                    title: "標籤"
+                    title: L("標籤")
                 )
 
             case .extractZip:
                 addMenuItem(
                     to: menu,
-                    title: "解壓 ZIP",
+                    title: L("解壓 ZIP"),
                     action: #selector(menuExtractZip)
                 )
 
             case .cloudDownload:
                 addMenuItem(
                     to: menu,
-                    title: "立即下載雲端檔案",
+                    title: L("立即下載雲端檔案"),
                     action: #selector(menuCloudDownload)
                 )
 
             case .copyPath:
                 addMenuItem(
                     to: menu,
-                    title: "複製路徑",
+                    title: L("複製路徑"),
                     action: #selector(menuCopyPath),
                     keyEquivalent: "c",
                     modifiers: [.command, .option]
@@ -1853,7 +1912,7 @@ extension FileTableViewController: NSMenuDelegate {
             case .revealInFinder:
                 addMenuItem(
                     to: menu,
-                    title: "在 Apple Finder 顯示",
+                    title: L("在 Apple Finder 顯示"),
                     action: #selector(menuReveal)
                 )
             }
@@ -1899,7 +1958,7 @@ extension FileTableViewController: NSMenuDelegate {
     }
 
     private func makeOpenWithMenu(for urls: [URL]) -> NSMenu {
-        let menu = NSMenu(title: "打開檔案的應用程式")
+        let menu = NSMenu(title: L("打開檔案的應用程式"))
         guard let firstURL = urls.first else { return menu }
 
         let workspace = NSWorkspace.shared
@@ -1930,7 +1989,7 @@ extension FileTableViewController: NSMenuDelegate {
             .standardizedFileURL
         if applicationURLs.isEmpty {
             let empty = NSMenuItem(
-                title: "冇合適應用程式",
+                title: L("冇合適應用程式"),
                 action: nil,
                 keyEquivalent: ""
             )
@@ -1955,7 +2014,7 @@ extension FileTableViewController: NSMenuDelegate {
 
         menu.addItem(.separator())
         let other = menu.addItem(
-            withTitle: "其他…",
+            withTitle: L("其他…"),
             action: #selector(menuChooseApplication),
             keyEquivalent: ""
         )
@@ -1964,7 +2023,7 @@ extension FileTableViewController: NSMenuDelegate {
     }
 
     private func makeViewModeMenu() -> NSMenu {
-        let menu = NSMenu(title: "顯示方式")
+        let menu = NSMenu(title: L("顯示方式"))
         for mode in FileViewMode.allCases {
             let keyEquivalent: String
             switch mode {
@@ -1987,7 +2046,7 @@ extension FileTableViewController: NSMenuDelegate {
     }
 
     private func makeSortMenu() -> NSMenu {
-        let menu = NSMenu(title: "排列方式")
+        let menu = NSMenu(title: L("排列方式"))
         for option in FileSortOption.allCases {
             let item = menu.addItem(
                 withTitle: option.title,
@@ -2001,7 +2060,7 @@ extension FileTableViewController: NSMenuDelegate {
 
         menu.addItem(.separator())
         let ascending = menu.addItem(
-            withTitle: "由細至大",
+            withTitle: L("由細至大"),
             action: #selector(menuSortAscending),
             keyEquivalent: ""
         )
@@ -2009,7 +2068,7 @@ extension FileTableViewController: NSMenuDelegate {
         ascending.state = currentSortAscending ? .on : .off
 
         let descending = menu.addItem(
-            withTitle: "由大至細",
+            withTitle: L("由大至細"),
             action: #selector(menuSortDescending),
             keyEquivalent: ""
         )
@@ -2019,10 +2078,10 @@ extension FileTableViewController: NSMenuDelegate {
     }
 
     private func makeTagsMenu() -> NSMenu {
-        let menu = NSMenu(title: "標籤")
+        let menu = NSMenu(title: L("標籤"))
         for tag in FinderTag.allCases {
             let item = menu.addItem(
-                withTitle: tag.title,
+                withTitle: tag.displayTitle,
                 action: #selector(menuApplyTag(_:)),
                 keyEquivalent: ""
             )
@@ -2032,7 +2091,7 @@ extension FileTableViewController: NSMenuDelegate {
         }
         menu.addItem(.separator())
         let clear = menu.addItem(
-            withTitle: "清除標籤",
+            withTitle: L("清除標籤"),
             action: #selector(menuClearTags),
             keyEquivalent: ""
         )
@@ -2043,7 +2102,7 @@ extension FileTableViewController: NSMenuDelegate {
     private func tagImage(color: NSColor) -> NSImage {
         guard let image = NSImage(
             systemSymbolName: "circle.fill",
-            accessibilityDescription: "標籤"
+            accessibilityDescription: L("標籤")
         ) else {
             return NSImage(size: NSSize(width: 12, height: 12))
         }

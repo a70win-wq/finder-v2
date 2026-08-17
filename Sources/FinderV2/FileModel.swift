@@ -10,9 +10,9 @@ enum CloudAvailability: Hashable {
     var title: String {
         switch self {
         case .local: return ""
-        case .onlineOnly: return "雲端"
-        case .downloading: return "下載中"
-        case .downloaded: return "已下載"
+        case .onlineOnly: return L("雲端")
+        case .downloading: return L("下載中")
+        case .downloaded: return L("已下載")
         }
     }
 }
@@ -33,6 +33,11 @@ struct FileItem: Hashable {
         storedName ?? FileManager.default.displayName(atPath: url.path)
     }
 
+    /// 檔案系統上嘅真實檔名（改名、比較、同步都要用呢個，唔好用 displayName）。
+    var fileSystemName: String {
+        url.lastPathComponent
+    }
+
     var shouldOpenAsFolder: Bool {
         isDirectory && !isPackage
     }
@@ -48,8 +53,9 @@ struct FileItem: Hashable {
             .isUbiquitousItemKey,
             .ubiquitousItemDownloadingStatusKey
         ]
-        guard let values = try? url.resourceValues(forKeys: keys),
-              values.isHidden != true else {
+        // loadItem 係讀一個已知路徑，唔應該因為隱藏就當佢唔存在。
+        // 隱藏過濾只應發生喺目錄列表。
+        guard let values = try? url.resourceValues(forKeys: keys) else {
             return nil
         }
         return FileItem(
@@ -58,7 +64,7 @@ struct FileItem: Hashable {
             isPackage: values.isPackage == true,
             fileSize: values.fileSize.map(Int64.init),
             modifiedDate: values.contentModificationDate,
-            kind: values.localizedTypeDescription ?? (values.isDirectory == true ? "資料夾" : "檔案"),
+            kind: values.localizedTypeDescription ?? (values.isDirectory == true ? L("資料夾") : L("檔案")),
             cloudAvailability: cloudAvailability(from: values),
             storedName: FileManager.default.displayName(atPath: url.path)
         )
@@ -95,7 +101,7 @@ struct FileItem: Hashable {
                     isPackage: values.isPackage == true,
                     fileSize: values.fileSize.map(Int64.init),
                     modifiedDate: values.contentModificationDate,
-                    kind: values.localizedTypeDescription ?? (values.isDirectory == true ? "資料夾" : "檔案"),
+                    kind: values.localizedTypeDescription ?? (values.isDirectory == true ? L("資料夾") : L("檔案")),
                     cloudAvailability: cloudAvailability(from: values),
                     storedName: fileManager.displayName(atPath: url.path)
                 )
@@ -132,10 +138,10 @@ enum FileSortOption: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .name: return "名稱"
-        case .size: return "大小"
-        case .modified: return "日期"
-        case .kind: return "種類"
+        case .name: return L("名稱")
+        case .size: return L("大小")
+        case .modified: return L("日期")
+        case .kind: return L("種類")
         }
     }
 }
@@ -249,37 +255,40 @@ final class FavoriteStore {
         entries.map(\.url)
     }
 
-    var entries: [FavoriteEntry] {
-        get {
-            if let data = UserDefaults.standard.data(forKey: entriesKey),
-               let decoded = try? JSONDecoder().decode([FavoriteEntry].self, from: data) {
-                return decoded.filter { FileManager.default.fileExists(atPath: $0.path) }
-            }
-            let migrated = (UserDefaults.standard.stringArray(forKey: defaultsKey) ?? [])
-                .map { path in
-                    FavoriteEntry(
-                        id: UUID(),
-                        path: URL(fileURLWithPath: path).standardizedFileURL.path,
-                        title: FileManager.default.displayName(atPath: path),
-                        group: "收藏"
-                    )
-                }
-                .filter { FileManager.default.fileExists(atPath: $0.path) }
-            save(migrated)
-            return migrated
+    /// 已儲存嘅完整收藏清單（包括而家未掛載嘅路徑）。
+    /// 顯示時先用 `entries` 過濾；改動必須寫返呢份完整清單，否則拔走硬碟後再改收藏會永久刪走舊項。
+    var storedEntries: [FavoriteEntry] {
+        if let data = UserDefaults.standard.data(forKey: entriesKey),
+           let decoded = try? JSONDecoder().decode([FavoriteEntry].self, from: data) {
+            return decoded
         }
+        let migrated = (UserDefaults.standard.stringArray(forKey: defaultsKey) ?? [])
+            .map { path in
+                FavoriteEntry(
+                    id: UUID(),
+                    path: URL(fileURLWithPath: path).standardizedFileURL.path,
+                    title: FileManager.default.displayName(atPath: path),
+                    group: L("收藏")
+                )
+            }
+        save(migrated)
+        return migrated
+    }
+
+    var entries: [FavoriteEntry] {
+        storedEntries.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     func add(_ url: URL) {
         let standardized = url.standardizedFileURL
-        var saved = entries
+        var saved = storedEntries
         guard !saved.contains(where: { $0.path == standardized.path }) else { return }
         saved.append(
             FavoriteEntry(
                 id: UUID(),
                 path: standardized.path,
                 title: FileManager.default.displayName(atPath: standardized.path),
-                group: "收藏"
+                group: L("收藏")
             )
         )
         save(saved)
@@ -287,11 +296,11 @@ final class FavoriteStore {
 
     func remove(_ url: URL) {
         let path = url.standardizedFileURL.path
-        save(entries.filter { $0.path != path })
+        save(storedEntries.filter { $0.path != path })
     }
 
     func update(id: UUID, title: String, group: String) {
-        var saved = entries
+        var saved = storedEntries
         guard let index = saved.firstIndex(where: { $0.id == id }) else { return }
         saved[index].title = title
         saved[index].group = group
@@ -299,11 +308,25 @@ final class FavoriteStore {
     }
 
     func move(id: UUID, to destinationIndex: Int) {
-        var saved = entries
-        guard let sourceIndex = saved.firstIndex(where: { $0.id == id }) else { return }
-        let entry = saved.remove(at: sourceIndex)
-        saved.insert(entry, at: min(max(0, destinationIndex), saved.count))
-        save(saved)
+        var visible = entries
+        guard let sourceIndex = visible.firstIndex(where: { $0.id == id }) else { return }
+        let entry = visible.remove(at: sourceIndex)
+        visible.insert(entry, at: min(max(0, destinationIndex), visible.count))
+
+        // 未掛載嘅收藏留喺原本位置，只重排而家睇到嘅項。
+        var remainingVisible = visible
+        var merged: [FavoriteEntry] = []
+        for stored in storedEntries {
+            if FileManager.default.fileExists(atPath: stored.path) {
+                if !remainingVisible.isEmpty {
+                    merged.append(remainingVisible.removeFirst())
+                }
+            } else {
+                merged.append(stored)
+            }
+        }
+        merged.append(contentsOf: remainingVisible)
+        save(merged)
     }
 
     private func save(_ entries: [FavoriteEntry]) {
@@ -396,10 +419,10 @@ enum SidebarLocationProvider {
     ) -> [SidebarLocation] {
         let home = fileManager.homeDirectoryForCurrentUser
         var locations: [SidebarLocation] = [
-            SidebarLocation(title: "主目錄", url: home, symbolName: "house"),
-            SidebarLocation(title: "桌面", url: home.appendingPathComponent("Desktop"), symbolName: "menubar.dock.rectangle"),
-            SidebarLocation(title: "文件", url: home.appendingPathComponent("Documents"), symbolName: "doc"),
-            SidebarLocation(title: "下載項目", url: home.appendingPathComponent("Downloads"), symbolName: "arrow.down.circle")
+            SidebarLocation(title: L("主目錄"), url: home, symbolName: "house"),
+            SidebarLocation(title: L("桌面"), url: home.appendingPathComponent("Desktop"), symbolName: "menubar.dock.rectangle"),
+            SidebarLocation(title: L("文件"), url: home.appendingPathComponent("Documents"), symbolName: "doc"),
+            SidebarLocation(title: L("下載項目"), url: home.appendingPathComponent("Downloads"), symbolName: "arrow.down.circle")
         ]
 
         let fixedPaths = Set(locations.map { $0.url.standardizedFileURL.path })
@@ -419,7 +442,7 @@ enum SidebarLocationProvider {
 
         let iCloud = home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
         if fileManager.fileExists(atPath: iCloud.path) {
-            locations.append(SidebarLocation(title: "iCloud 雲碟", url: iCloud, symbolName: "icloud"))
+            locations.append(SidebarLocation(title: L("iCloud 雲碟"), url: iCloud, symbolName: "icloud"))
         }
 
         let cloudStorage = home.appendingPathComponent("Library/CloudStorage")
@@ -435,7 +458,7 @@ enum SidebarLocationProvider {
                 let name = cloudURL.lastPathComponent
                     .replacingOccurrences(of: "GoogleDrive-", with: "Google Drive – ")
                 let isFileProviderBacked = CloudStorageMetadata.isFileProviderBacked(at: standardizedURL)
-                let title = isFileProviderBacked ? name : "\(name)（舊資料夾）"
+                let title = isFileProviderBacked ? name : "\(name)" + L("（舊資料夾）")
                 let providerBundleIdentifier = cloudURL.lastPathComponent.hasPrefix("GoogleDrive-")
                     ? "com.google.drivefs"
                     : nil
@@ -506,14 +529,20 @@ enum FileFormatting {
         return formatter
     }()
 
-    static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hant_HK")
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        formatter.doesRelativeDateFormatting = true
-        return formatter
-    }()
+    private static let dateFormatterLock = NSLock()
+    private static var cachedDateFormatter = makeDateFormatter()
+
+    static var dateFormatter: DateFormatter {
+        dateFormatterLock.lock()
+        defer { dateFormatterLock.unlock() }
+        return cachedDateFormatter
+    }
+
+    static func applyCurrentLocale() {
+        dateFormatterLock.lock()
+        cachedDateFormatter = makeDateFormatter()
+        dateFormatterLock.unlock()
+    }
 
     static func size(for item: FileItem) -> String {
         guard !item.isDirectory, let size = item.fileSize else { return "—" }
@@ -524,9 +553,19 @@ enum FileFormatting {
         guard let date else { return "—" }
         return dateFormatter.string(from: date)
     }
+
+    private static func makeDateFormatter() -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Localization.locale
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        formatter.doesRelativeDateFormatting = true
+        return formatter
+    }
 }
 
 extension Notification.Name {
     static let finderV2FileSystemChanged = Notification.Name("FinderV2FileSystemChanged")
     static let finderV2OperationStatusChanged = Notification.Name("FinderV2OperationStatusChanged")
+    static let finderV2LanguageChanged = Notification.Name("FinderV2LanguageChanged")
 }

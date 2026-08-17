@@ -56,9 +56,11 @@ final class PaneViewController: NSViewController {
     private let sortDirectionButton = NSButton()
     private let hiddenFilesButton = NSButton()
     private let favoriteButton = NSButton()
+    private let chooseFolderButton = NSButton()
+    private let newFolderButton = NSButton()
     private let statusLabel = NSTextField(labelWithString: "")
     private let progressIndicator = NSProgressIndicator()
-    private let cancelOperationButton = NSButton(title: "取消", target: nil, action: nil)
+    private let cancelOperationButton = NSButton(title: L("取消"), target: nil, action: nil)
     private let contentSplitView = NSSplitView()
     private let directoryMonitor = DirectoryMonitor()
 
@@ -72,6 +74,7 @@ final class PaneViewController: NSViewController {
     private var quickLookURLs: [URL] = []
     private(set) var currentDirectory: URL
     private var isEditingPath = false
+    private var isMonitoringEnabled = true
     var currentItems: [FileItem] { allItems }
 
     init(storageKey: String, initialURL: URL) {
@@ -98,38 +101,38 @@ final class PaneViewController: NSViewController {
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(toolbar)
 
-        configureButton(backButton, symbol: "chevron.left", tooltip: "返回", action: #selector(goBack))
-        configureButton(forwardButton, symbol: "chevron.right", tooltip: "前進", action: #selector(goForward))
-        configureButton(upButton, symbol: "arrow.up", tooltip: "上一層", action: #selector(goUp))
-        configureButton(refreshButton, symbol: "arrow.clockwise", tooltip: "重新整理", action: #selector(refreshPressed), title: "重新整理", width: 78)
-        let chooseFolderButton = makeButton(symbol: "folder", tooltip: "選擇資料夾", action: #selector(chooseFolderPressed))
-        let folderButton = makeButton(symbol: "folder.badge.plus", tooltip: "新增資料夾", action: #selector(newFolderPressed))
+        configureButton(backButton, symbol: "chevron.left", tooltip: L("返回"), action: #selector(goBack))
+        configureButton(forwardButton, symbol: "chevron.right", tooltip: L("前進"), action: #selector(goForward))
+        configureButton(upButton, symbol: "arrow.up", tooltip: L("上一層"), action: #selector(goUp))
+        configureButton(refreshButton, symbol: "arrow.clockwise", tooltip: L("重新整理"), action: #selector(refreshPressed), title: L("重新整理"), width: 78)
+        configureButton(chooseFolderButton, symbol: "folder", tooltip: L("選擇資料夾"), action: #selector(chooseFolderPressed))
+        configureButton(newFolderButton, symbol: "folder.badge.plus", tooltip: L("新增資料夾"), action: #selector(newFolderPressed))
 
         viewModeControl.segmentCount = 4
         viewModeControl.trackingMode = .selectOne
         viewModeControl.segmentStyle = .rounded
         viewModeControl.controlSize = .regular
         viewModeControl.setImage(
-            NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "清單"),
+            NSImage(systemSymbolName: "list.bullet", accessibilityDescription: L("清單")),
             forSegment: FileViewMode.list.rawValue
         )
         viewModeControl.setImage(
-            NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "大圖示"),
+            NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: L("大圖示")),
             forSegment: FileViewMode.icons.rawValue
         )
         viewModeControl.setImage(
-            NSImage(systemSymbolName: "rectangle.split.3x1", accessibilityDescription: "直欄"),
+            NSImage(systemSymbolName: "rectangle.split.3x1", accessibilityDescription: L("直欄")),
             forSegment: FileViewMode.columns.rawValue
         )
         viewModeControl.setImage(
-            NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "圖庫"),
+            NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: L("圖庫")),
             forSegment: FileViewMode.gallery.rawValue
         )
-        viewModeControl.setToolTip("清單", forSegment: FileViewMode.list.rawValue)
-        viewModeControl.setToolTip("大圖示", forSegment: FileViewMode.icons.rawValue)
-        viewModeControl.setToolTip("直欄", forSegment: FileViewMode.columns.rawValue)
-        viewModeControl.setToolTip("圖庫", forSegment: FileViewMode.gallery.rawValue)
-        viewModeControl.setAccessibilityLabel("顯示方式")
+        viewModeControl.setToolTip(L("清單"), forSegment: FileViewMode.list.rawValue)
+        viewModeControl.setToolTip(L("大圖示"), forSegment: FileViewMode.icons.rawValue)
+        viewModeControl.setToolTip(L("直欄"), forSegment: FileViewMode.columns.rawValue)
+        viewModeControl.setToolTip(L("圖庫"), forSegment: FileViewMode.gallery.rawValue)
+        viewModeControl.setAccessibilityLabel(L("顯示方式"))
         viewModeControl.target = self
         viewModeControl.action = #selector(viewModeChanged)
         viewModeControl.translatesAutoresizingMaskIntoConstraints = false
@@ -166,9 +169,9 @@ final class PaneViewController: NSViewController {
         addressField.isSelectable = true
         addressField.usesSingleLineMode = true
         addressField.lineBreakMode = .byTruncatingMiddle
-        addressField.placeholderString = "完整路徑"
-        addressField.toolTip = "按 Command-C 複製完整路徑；Return 開啟；Escape 返回"
-        addressField.setAccessibilityLabel("完整路徑")
+        addressField.placeholderString = L("完整路徑")
+        addressField.toolTip = L("按 Command-C 複製完整路徑；Return 開啟；Escape 返回")
+        addressField.setAccessibilityLabel(L("完整路徑"))
         addressField.target = self
         addressField.action = #selector(pathEditingCommitted)
         addressField.onCancel = { [weak self] in self?.endPathEditing() }
@@ -176,7 +179,7 @@ final class PaneViewController: NSViewController {
         addressField.translatesAutoresizingMaskIntoConstraints = false
         toolbar.addSubview(addressField)
 
-        let actionStack = NSStackView(views: [viewModeControl, refreshButton, chooseFolderButton, folderButton])
+        let actionStack = NSStackView(views: [viewModeControl, refreshButton, chooseFolderButton, newFolderButton])
         actionStack.orientation = .horizontal
         actionStack.spacing = 6
         actionStack.translatesAutoresizingMaskIntoConstraints = false
@@ -189,7 +192,7 @@ final class PaneViewController: NSViewController {
         optionsBar.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(optionsBar)
 
-        searchField.placeholderString = "搜尋呢邊"
+        searchField.placeholderString = L("搜尋呢邊")
         searchField.sendsSearchStringImmediately = true
         searchField.controlSize = .small
         searchField.font = .systemFont(ofSize: 11.5)
@@ -202,7 +205,7 @@ final class PaneViewController: NSViewController {
         FileSortOption.allCases.forEach { sortPopUp.addItem(withTitle: $0.title) }
         sortPopUp.target = self
         sortPopUp.action = #selector(sortChanged)
-        sortPopUp.toolTip = "排列方式"
+        sortPopUp.toolTip = L("排列方式")
         sortPopUp.controlSize = .small
         sortPopUp.font = .systemFont(ofSize: 11.5)
         sortPopUp.translatesAutoresizingMaskIntoConstraints = false
@@ -211,7 +214,7 @@ final class PaneViewController: NSViewController {
         configureButton(
             sortDirectionButton,
             symbol: "arrow.up",
-            tooltip: "由細至大",
+            tooltip: L("由細至大"),
             action: #selector(sortDirectionChanged)
         )
         optionsBar.addSubview(sortDirectionButton)
@@ -219,7 +222,7 @@ final class PaneViewController: NSViewController {
         configureButton(
             favoriteButton,
             symbol: "star",
-            tooltip: "收藏目前資料夾",
+            tooltip: L("收藏目前資料夾"),
             action: #selector(toggleFavorite)
         )
         optionsBar.addSubview(favoriteButton)
@@ -227,7 +230,7 @@ final class PaneViewController: NSViewController {
         configureButton(
             hiddenFilesButton,
             symbol: "eye.slash",
-            tooltip: "顯示隱藏檔案",
+            tooltip: L("顯示隱藏檔案"),
             action: #selector(toggleHiddenFiles)
         )
         optionsBar.addSubview(hiddenFilesButton)
@@ -382,6 +385,12 @@ final class PaneViewController: NSViewController {
             name: .finderV2OperationStatusChanged,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageChanged),
+            name: .finderV2LanguageChanged,
+            object: nil
+        )
         navigate(to: initialURL, recordingHistory: true)
     }
 
@@ -409,7 +418,7 @@ final class PaneViewController: NSViewController {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: standardized.path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
-            showMessage(title: "搵唔到資料夾", message: "呢個資料夾可能已經搬走或刪除。")
+            showMessage(title: L("搵唔到資料夾"), message: L("呢個資料夾可能已經搬走或刪除。"))
             return
         }
 
@@ -422,13 +431,7 @@ final class PaneViewController: NSViewController {
         }
 
         currentDirectory = standardized
-        directoryMonitor.startMonitoring(standardized) { [weak self] in
-            guard let self,
-                  self.currentDirectory.standardizedFileURL == standardized else {
-                return
-            }
-            self.reloadItems()
-        }
+        startDirectoryMonitor(for: standardized)
         pathControl.url = standardized
         searchField.stringValue = ""
         updateFavoriteButton()
@@ -447,20 +450,102 @@ final class PaneViewController: NSViewController {
            !FolderAccessStore.shared.hasAccess(to: standardized) {
             allItems = []
             fileTableController.reload(items: [], currentDirectory: standardized)
-            statusLabel.stringValue = "請按資料夾按鈕允許存取"
+            statusLabel.stringValue = L("請按資料夾按鈕允許存取")
         } else {
             reloadItems()
         }
     }
 
+    @objc private func languageChanged() {
+        applyLocalizedChrome()
+        sidebarController.applyLocalization()
+        fileTableController.applyLocalization()
+        applyDisplayOptions()
+    }
+
+    private func applyLocalizedChrome() {
+        configureButton(backButton, symbol: "chevron.left", tooltip: L("返回"), action: #selector(goBack))
+        configureButton(forwardButton, symbol: "chevron.right", tooltip: L("前進"), action: #selector(goForward))
+        configureButton(upButton, symbol: "arrow.up", tooltip: L("上一層"), action: #selector(goUp))
+        configureButton(
+            refreshButton,
+            symbol: "arrow.clockwise",
+            tooltip: L("重新整理"),
+            action: #selector(refreshPressed),
+            title: L("重新整理"),
+            width: 78
+        )
+        configureButton(chooseFolderButton, symbol: "folder", tooltip: L("選擇資料夾"), action: #selector(chooseFolderPressed))
+        configureButton(newFolderButton, symbol: "folder.badge.plus", tooltip: L("新增資料夾"), action: #selector(newFolderPressed))
+        viewModeControl.setImage(
+            NSImage(systemSymbolName: "list.bullet", accessibilityDescription: L("清單")),
+            forSegment: FileViewMode.list.rawValue
+        )
+        viewModeControl.setImage(
+            NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: L("大圖示")),
+            forSegment: FileViewMode.icons.rawValue
+        )
+        viewModeControl.setImage(
+            NSImage(systemSymbolName: "rectangle.split.3x1", accessibilityDescription: L("直欄")),
+            forSegment: FileViewMode.columns.rawValue
+        )
+        viewModeControl.setImage(
+            NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: L("圖庫")),
+            forSegment: FileViewMode.gallery.rawValue
+        )
+        viewModeControl.setToolTip(L("清單"), forSegment: FileViewMode.list.rawValue)
+        viewModeControl.setToolTip(L("大圖示"), forSegment: FileViewMode.icons.rawValue)
+        viewModeControl.setToolTip(L("直欄"), forSegment: FileViewMode.columns.rawValue)
+        viewModeControl.setToolTip(L("圖庫"), forSegment: FileViewMode.gallery.rawValue)
+        viewModeControl.setAccessibilityLabel(L("顯示方式"))
+        addressField.placeholderString = L("完整路徑")
+        addressField.toolTip = L("按 Command-C 複製完整路徑；Return 開啟；Escape 返回")
+        addressField.setAccessibilityLabel(L("完整路徑"))
+        searchField.placeholderString = L("搜尋呢邊")
+        let selectedSort = sortOption
+        sortPopUp.removeAllItems()
+        FileSortOption.allCases.forEach { sortPopUp.addItem(withTitle: $0.title) }
+        sortPopUp.selectItem(at: selectedSort.rawValue)
+        sortPopUp.toolTip = L("排列方式")
+        cancelOperationButton.title = L("取消")
+        updateSortDirectionButton()
+        updateHiddenFilesButton()
+        updateFavoriteButton()
+    }
+
+    func setMonitoringEnabled(_ enabled: Bool) {
+        isMonitoringEnabled = enabled
+        if enabled {
+            startDirectoryMonitor(for: currentDirectory)
+        } else {
+            directoryMonitor.stopMonitoring()
+        }
+    }
+
+    private func startDirectoryMonitor(for url: URL) {
+        guard isMonitoringEnabled else {
+            directoryMonitor.stopMonitoring()
+            return
+        }
+        let standardized = url.standardizedFileURL
+        directoryMonitor.startMonitoring(standardized) { [weak self] in
+            guard let self,
+                  self.currentDirectory.standardizedFileURL == standardized else {
+                return
+            }
+            self.reloadItems()
+        }
+    }
+
     func reloadItems() {
         let requestedDirectory = currentDirectory
+        let showHidden = showHiddenFiles
         reloadRequestID += 1
         let requestedReloadID = reloadRequestID
-        statusLabel.stringValue = "載入中…"
+        statusLabel.stringValue = L("載入中…")
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result {
-                try FileItem.load(from: requestedDirectory, showHidden: self.showHiddenFiles)
+                try FileItem.load(from: requestedDirectory, showHidden: showHidden)
             }
             DispatchQueue.main.async {
                 guard requestedDirectory.standardizedFileURL == self.currentDirectory.standardizedFileURL else {
@@ -474,8 +559,8 @@ final class PaneViewController: NSViewController {
                     self.sidebarController.reloadLocations()
                     self.sidebarController.selectLocation(matching: requestedDirectory)
                 case .failure(let error):
-                    self.statusLabel.stringValue = "未能顯示"
-                    self.showMessage(title: "開唔到呢個資料夾", message: ErrorMessage.text(for: error))
+                    self.statusLabel.stringValue = L("未能顯示")
+                    self.showMessage(title: L("開唔到呢個資料夾"), message: ErrorMessage.text(for: error))
                 }
             }
         }
@@ -503,7 +588,7 @@ final class PaneViewController: NSViewController {
             options: options
         ) as? [URL]) ?? []
         guard !urls.isEmpty else {
-            showMessage(title: "冇檔案可以貼上", message: "請先複製一個或多個檔案。")
+            showMessage(title: L("冇檔案可以貼上"), message: L("請先複製一個或多個檔案。"))
             return
         }
         transfer(urls, to: currentDirectory, operation: .copy)
@@ -536,10 +621,10 @@ final class PaneViewController: NSViewController {
                     self.view.window?.undoManager?.registerUndo(withTarget: self) { target in
                         target.undoDuplicates(duplicated)
                     }
-                    self.view.window?.undoManager?.setActionName("製作副本")
+                    self.view.window?.undoManager?.setActionName(L("製作副本"))
                 }
                 if let error = errors.first {
-                    self.showMessage(title: "有副本整唔到", message: ErrorMessage.text(for: error))
+                    self.showMessage(title: L("有副本整唔到"), message: ErrorMessage.text(for: error))
                 }
                 NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
             }
@@ -551,8 +636,10 @@ final class PaneViewController: NSViewController {
         let sourceURLs = fileTableController.selectedURLs()
         guard !sourceURLs.isEmpty else { return }
 
-        let desiredFolder = currentDirectory.appendingPathComponent(
-            "包含項目的新資料夾",
+        let parents = Set(sourceURLs.map { $0.deletingLastPathComponent().standardizedFileURL })
+        let folderParent = parents.count == 1 ? parents.first! : currentDirectory
+        let desiredFolder = folderParent.appendingPathComponent(
+            L("包含項目的新資料夾"),
             isDirectory: true
         )
         let folderURL = FileTransferCoordinator.availableURL(for: desiredFolder)
@@ -585,7 +672,10 @@ final class PaneViewController: NSViewController {
                         to: pair.original
                     )
                 }
-                try? FileManager.default.removeItem(at: folderURL)
+                let remaining = (try? FileManager.default.contentsOfDirectory(atPath: folderURL.path)) ?? ["."]
+                if remaining.isEmpty {
+                    try? FileManager.default.removeItem(at: folderURL)
+                }
                 for _ in movedPairs.count..<sourceURLs.count {
                     OperationStatusCenter.shared.finish()
                 }
@@ -599,10 +689,10 @@ final class PaneViewController: NSViewController {
                             movedPairs: movedPairs
                         )
                     }
-                    self.view.window?.undoManager?.setActionName("新增包含項目的資料夾")
+                    self.view.window?.undoManager?.setActionName(L("新增包含項目的資料夾"))
                 } else if let operationError {
                     self.showMessage(
-                        title: "新增唔到資料夾",
+                        title: L("新增唔到資料夾"),
                         message: ErrorMessage.text(for: operationError)
                     )
                 }
@@ -628,7 +718,7 @@ final class PaneViewController: NSViewController {
             guard let error else { return }
             DispatchQueue.main.async {
                 self?.showMessage(
-                    title: "開唔到檔案",
+                    title: L("開唔到檔案"),
                     message: ErrorMessage.text(for: error)
                 )
             }
@@ -639,8 +729,8 @@ final class PaneViewController: NSViewController {
         didActivate?(self)
         guard !fileTableController.selectedURLs().isEmpty else { return }
         let panel = NSOpenPanel()
-        panel.title = "選擇應用程式"
-        panel.prompt = "開啟"
+        panel.title = L("選擇應用程式")
+        panel.prompt = L("開啟")
         panel.allowedContentTypes = [.application]
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -680,11 +770,11 @@ final class PaneViewController: NSViewController {
                     self.view.window?.undoManager?.registerUndo(withTarget: self) { target in
                         target.undoCreatedItems(createdURLs)
                     }
-                    self.view.window?.undoManager?.setActionName("製作替身")
+                    self.view.window?.undoManager?.setActionName(L("製作替身"))
                 }
                 if let firstError {
                     self.showMessage(
-                        title: "有替身整唔到",
+                        title: L("有替身整唔到"),
                         message: ErrorMessage.text(for: firstError)
                     )
                 }
@@ -708,20 +798,20 @@ final class PaneViewController: NSViewController {
         sortPopUp.selectItem(at: sortOption.rawValue)
 
         let directionPopUp = NSPopUpButton()
-        directionPopUp.addItems(withTitles: ["由細至大", "由大至細"])
+        directionPopUp.addItems(withTitles: [L("由細至大"), L("由大至細")])
         directionPopUp.selectItem(at: sortAscending ? 0 : 1)
 
         let hiddenCheckBox = NSButton(
-            checkboxWithTitle: "顯示隱藏檔案",
+            checkboxWithTitle: L("顯示隱藏檔案"),
             target: nil,
             action: nil
         )
         hiddenCheckBox.state = showHiddenFiles ? .on : .off
 
         let stack = NSStackView(views: [
-            labeledControl(title: "顯示方式", control: viewModePopUp),
-            labeledControl(title: "排列方式", control: sortPopUp),
-            labeledControl(title: "次序", control: directionPopUp),
+            labeledControl(title: L("顯示方式"), control: viewModePopUp),
+            labeledControl(title: L("排列方式"), control: sortPopUp),
+            labeledControl(title: L("次序"), control: directionPopUp),
             hiddenCheckBox
         ])
         stack.orientation = .vertical
@@ -730,10 +820,10 @@ final class PaneViewController: NSViewController {
         stack.frame = NSRect(x: 0, y: 0, width: 300, height: 150)
 
         let alert = NSAlert()
-        alert.messageText = "顯示選項"
+        alert.messageText = L("顯示選項")
         alert.accessoryView = stack
-        alert.addButton(withTitle: "套用")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L("套用"))
+        alert.addButton(withTitle: L("取消"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let mode = FileViewMode(rawValue: viewModePopUp.indexOfSelectedItem) ?? .list
@@ -767,7 +857,7 @@ final class PaneViewController: NSViewController {
             DispatchQueue.main.async {
                 if let firstError {
                     self.showMessage(
-                        title: "有標籤加唔到",
+                        title: L("有標籤加唔到"),
                         message: ErrorMessage.text(for: firstError)
                     )
                 }
@@ -803,13 +893,14 @@ final class PaneViewController: NSViewController {
         guard let item = fileTableController.selectedItems().first else { return }
         let alert = NSAlert()
         alert.messageText = item.name
-        alert.informativeText = [
-            "種類：\(item.kind)",
-            "大小：\(FileFormatting.size(for: item))",
-            "修改日期：\(FileFormatting.date(item.modifiedDate))",
-            "位置：\(item.url.deletingLastPathComponent().path)"
-        ].joined(separator: "\n")
-        alert.addButton(withTitle: "知道")
+        alert.informativeText = String(
+            format: L("種類：%@\n大小：%@\n修改日期：%@\n位置：%@"),
+            item.kind,
+            FileFormatting.size(for: item),
+            FileFormatting.date(item.modifiedDate),
+            item.url.deletingLastPathComponent().path
+        )
+        alert.addButton(withTitle: L("知道"))
         alert.runModal()
     }
 
@@ -833,26 +924,26 @@ final class PaneViewController: NSViewController {
 
         addPathMenuItem(
             to: menu,
-            title: "拷貝「\(folderName)」",
+            title: String(format: L("拷貝「%@」"), folderName),
             action: #selector(copyPathItem),
             representedObject: url
         )
         addPathMenuItem(
             to: menu,
-            title: "複製路徑",
+            title: L("複製路徑"),
             action: #selector(copyPathItemText),
             representedObject: url
         )
         addPathMenuItem(
             to: menu,
-            title: "在 Apple Finder 顯示",
+            title: L("在 Apple Finder 顯示"),
             action: #selector(revealPathItem),
             representedObject: url
         )
         menu.addItem(.separator())
         addPathMenuItem(
             to: menu,
-            title: "取得資料",
+            title: L("取得資料"),
             action: #selector(showPathItemInfo),
             representedObject: url
         )
@@ -906,13 +997,13 @@ final class PaneViewController: NSViewController {
         } ?? "—"
         let alert = NSAlert()
         alert.messageText = FileManager.default.displayName(atPath: url.path)
-        alert.informativeText = [
-            "種類：資料夾",
-            "大小：\(size)",
-            "修改日期：\(modified)",
-            "位置：\(url.deletingLastPathComponent().path)"
-        ].joined(separator: "\n")
-        alert.addButton(withTitle: "知道")
+        alert.informativeText = String(
+            format: L("種類：資料夾\n大小：%@\n修改日期：%@\n位置：%@"),
+            size,
+            modified,
+            url.deletingLastPathComponent().path
+        )
+        alert.addButton(withTitle: L("知道"))
         alert.runModal()
     }
 
@@ -925,27 +1016,27 @@ final class PaneViewController: NSViewController {
 
     func createNewFolder() {
         didActivate?(self)
-        let input = NSTextField(string: "未命名資料夾")
+        let input = NSTextField(string: L("未命名資料夾"))
         input.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         input.selectText(nil)
 
         let alert = NSAlert()
-        alert.messageText = "新增資料夾"
-        alert.informativeText = "輸入資料夾名稱："
+        alert.messageText = L("新增資料夾")
+        alert.informativeText = L("輸入資料夾名稱：")
         alert.accessoryView = input
-        alert.addButton(withTitle: "新增")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L("新增"))
+        alert.addButton(withTitle: L("取消"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isValidFileName(name) else {
-            showMessage(title: "名稱唔可以用", message: "名稱唔可以係空白，亦唔可以有「/」。")
+            showMessage(title: L("名稱唔可以用"), message: L("名稱唔可以係空白，亦唔可以有「/」。"))
             return
         }
 
         let newFolder = currentDirectory.appendingPathComponent(name, isDirectory: true)
         guard !FileManager.default.fileExists(atPath: newFolder.path) else {
-            showMessage(title: "已有同名項目", message: "請用另一個名稱。")
+            showMessage(title: L("已有同名項目"), message: L("請用另一個名稱。"))
             return
         }
 
@@ -954,19 +1045,19 @@ final class PaneViewController: NSViewController {
             view.window?.undoManager?.registerUndo(withTarget: self) { target in
                 target.undoNewFolder(at: newFolder)
             }
-            view.window?.undoManager?.setActionName("新增資料夾")
+            view.window?.undoManager?.setActionName(L("新增資料夾"))
             reloadItems()
         } catch {
-            showMessage(title: "新增唔到資料夾", message: ErrorMessage.text(for: error))
+            showMessage(title: L("新增唔到資料夾"), message: ErrorMessage.text(for: error))
         }
     }
 
     func chooseFolder(suggestedURL: URL? = nil) {
         didActivate?(self)
         let panel = NSOpenPanel()
-        panel.title = "選擇要顯示嘅資料夾"
-        panel.message = "第一次使用呢個位置，需要你確認一次。"
-        panel.prompt = "使用呢個資料夾"
+        panel.title = L("選擇要顯示嘅資料夾")
+        panel.message = L("第一次使用呢個位置，需要你確認一次。")
+        panel.prompt = L("使用呢個資料夾")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
@@ -978,52 +1069,57 @@ final class PaneViewController: NSViewController {
             try FolderAccessStore.shared.grantAccess(to: chosenURL)
             navigate(to: chosenURL, recordingHistory: true)
         } catch {
-            showMessage(title: "未能記住呢個資料夾", message: ErrorMessage.text(for: error))
+            showMessage(title: L("未能記住呢個資料夾"), message: ErrorMessage.text(for: error))
         }
     }
 
     func renameSelectedItem() {
         didActivate?(self)
         let selected = fileTableController.selectedItems()
+        if selected.count > 1 {
+            batchRenameSelectedItems()
+            return
+        }
         guard selected.count == 1, let item = selected.first else {
-            showMessage(title: "請揀一個項目", message: "每次只可以幫一個檔案或資料夾改名。")
+            showMessage(title: L("請揀一個項目"), message: L("每次只可以幫一個檔案或資料夾改名。"))
             return
         }
 
-        let input = NSTextField(string: item.name)
+        let currentName = item.url.lastPathComponent
+        let input = NSTextField(string: currentName)
         input.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
         input.selectText(nil)
 
         let alert = NSAlert()
-        alert.messageText = "改名"
-        alert.informativeText = "輸入新名稱："
+        alert.messageText = L("改名")
+        alert.informativeText = L("輸入新名稱：")
         alert.accessoryView = input
-        alert.addButton(withTitle: "改名")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L("改名"))
+        alert.addButton(withTitle: L("取消"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isValidFileName(newName) else {
-            showMessage(title: "名稱唔可以用", message: "名稱唔可以係空白，亦唔可以有「/」。")
+            showMessage(title: L("名稱唔可以用"), message: L("名稱唔可以係空白，亦唔可以有「/」。"))
             return
         }
-        guard newName != item.name else { return }
+        guard newName != currentName else { return }
 
         let destination = item.url.deletingLastPathComponent().appendingPathComponent(newName)
-        guard !FileManager.default.fileExists(atPath: destination.path) else {
-            showMessage(title: "已有同名項目", message: "請用另一個名稱。")
+        if FileRenameSupport.existsAsDifferentItem(destination, source: item.url) {
+            showMessage(title: L("已有同名項目"), message: L("請用另一個名稱。"))
             return
         }
 
         do {
-            try FileManager.default.moveItem(at: item.url, to: destination)
+            try FileRenameSupport.moveItem(from: item.url, to: destination)
             view.window?.undoManager?.registerUndo(withTarget: self) { target in
                 target.undoRename(from: destination, to: item.url)
             }
-            view.window?.undoManager?.setActionName("改名")
+            view.window?.undoManager?.setActionName(L("改名"))
             NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
         } catch {
-            showMessage(title: "改唔到名", message: ErrorMessage.text(for: error))
+            showMessage(title: L("改唔到名"), message: ErrorMessage.text(for: error))
         }
     }
 
@@ -1033,33 +1129,33 @@ final class PaneViewController: NSViewController {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
         guard selected.count > 1 else {
-            showMessage(title: "請揀多個項目", message: "揀兩個或以上檔案，先可以批量改名。")
+            showMessage(title: L("請揀多個項目"), message: L("揀兩個或以上檔案，先可以批量改名。"))
             return
         }
 
         let modePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
         BatchRenameMode.allCases.forEach { modePopUp.addItem(withTitle: $0.title) }
         let firstField = NSTextField(string: "")
-        firstField.placeholderString = "要加嘅字／要搵嘅字／新名稱"
+        firstField.placeholderString = L("要加嘅字／要搵嘅字／新名稱")
         let secondField = NSTextField(string: "")
-        secondField.placeholderString = "取代成（只限搵字及取代）"
+        secondField.placeholderString = L("取代成（只限搵字及取代）")
         let stack = NSStackView(views: [modePopUp, firstField, secondField])
         stack.orientation = .vertical
         stack.spacing = 8
         stack.frame = NSRect(x: 0, y: 0, width: 330, height: 88)
 
         let alert = NSAlert()
-        alert.messageText = "批量改名"
-        alert.informativeText = "揀方法，再輸入文字："
+        alert.messageText = L("批量改名")
+        alert.informativeText = L("揀方法，再輸入文字：")
         alert.accessoryView = stack
-        alert.addButton(withTitle: "預覽及改名")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L("預覽及改名"))
+        alert.addButton(withTitle: L("取消"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let mode = BatchRenameMode(rawValue: modePopUp.indexOfSelectedItem) ?? .prefix
         let firstText = firstField.stringValue
         guard !firstText.isEmpty else {
-            showMessage(title: "未有文字", message: "請輸入要加、要搵或新名稱。")
+            showMessage(title: L("未有文字"), message: L("請輸入要加、要搵或新名稱。"))
             return
         }
         let names = BatchRenameEngine.proposedNames(
@@ -1068,18 +1164,31 @@ final class PaneViewController: NSViewController {
             firstText: firstText,
             secondText: secondField.stringValue
         )
-        guard Set(names.map { $0.lowercased() }).count == names.count,
-              names.allSatisfy(isValidFileName) else {
-            showMessage(title: "新名稱有重複", message: "請改一改設定，再試一次。")
+        guard names.allSatisfy(isValidFileName) else {
+            showMessage(title: L("名稱唔可以用"), message: L("名稱唔可以係空白，亦唔可以有「/」。"))
             return
         }
 
-        let oldURLs = Set(selected.map { $0.url.standardizedFileURL })
-        let finalURLs = names.map { currentDirectory.appendingPathComponent($0) }
-        guard finalURLs.allSatisfy({
-            oldURLs.contains($0.standardizedFileURL) || !FileManager.default.fileExists(atPath: $0.path)
+        var namesByParent: [String: Set<String>] = [:]
+        for (item, name) in zip(selected, names) {
+            let parent = item.url.deletingLastPathComponent().standardizedFileURL.path
+            var used = namesByParent[parent] ?? []
+            if !used.insert(name.lowercased()).inserted {
+                showMessage(title: L("新名稱有重複"), message: L("請改一改設定，再試一次。"))
+                return
+            }
+            namesByParent[parent] = used
+        }
+
+        let finalURLs = zip(selected, names).map { item, name in
+            item.url.deletingLastPathComponent().appendingPathComponent(name)
+        }
+        guard zip(selected, finalURLs).allSatisfy({ item, finalURL in
+            if !FileManager.default.fileExists(atPath: finalURL.path) { return true }
+            return FileRenameSupport.isSameItem(item.url, as: finalURL)
+                || selected.contains { $0.url.standardizedFileURL == finalURL.standardizedFileURL }
         }) else {
-            showMessage(title: "已有同名項目", message: "請改一改設定，避免撞名。")
+            showMessage(title: L("已有同名項目"), message: L("請改一改設定，避免撞名。"))
             return
         }
 
@@ -1087,31 +1196,22 @@ final class PaneViewController: NSViewController {
             .map { "\($0.0.name)  →  \($0.1)" }
             .joined(separator: "\n")
         let confirm = NSAlert()
-        confirm.messageText = "確認改 \(selected.count) 個名稱？"
+        confirm.messageText = String(format: L("確認改 %ld 個名稱？"), selected.count)
         confirm.informativeText = preview + (selected.count > 8 ? "\n…" : "")
-        confirm.addButton(withTitle: "改名")
-        confirm.addButton(withTitle: "取消")
+        confirm.addButton(withTitle: L("改名"))
+        confirm.addButton(withTitle: L("取消"))
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
 
         do {
-            var temporaryPairs: [(old: URL, temporary: URL, final: URL)] = []
-            for (item, finalURL) in zip(selected, finalURLs) {
-                let temporary = currentDirectory.appendingPathComponent(".FinderV2Rename-\(UUID().uuidString)")
-                try FileManager.default.moveItem(at: item.url, to: temporary)
-                temporaryPairs.append((item.url, temporary, finalURL))
-            }
-            for pair in temporaryPairs {
-                try FileManager.default.moveItem(at: pair.temporary, to: pair.final)
-            }
-            let undoPairs = temporaryPairs.map { (old: $0.old, new: $0.final) }
+            let undoPairs = try BatchRenameEngine.apply(items: selected, names: names)
             view.window?.undoManager?.registerUndo(withTarget: self) { target in
                 target.undoBatchRename(undoPairs)
             }
-            view.window?.undoManager?.setActionName("批量改名")
+            view.window?.undoManager?.setActionName(L("批量改名"))
             NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
         } catch {
             reloadItems()
-            showMessage(title: "有項目改唔到名", message: ErrorMessage.text(for: error))
+            showMessage(title: L("有項目改唔到名"), message: ErrorMessage.text(for: error))
         }
     }
 
@@ -1119,20 +1219,20 @@ final class PaneViewController: NSViewController {
         didActivate?(self)
         let urls = fileTableController.selectedURLs()
         guard !urls.isEmpty else {
-            showMessage(title: "未揀檔案", message: "請先揀要壓縮嘅檔案。")
+            showMessage(title: L("未揀檔案"), message: L("請先揀要壓縮嘅檔案。"))
             return
         }
         let defaultName = urls.count == 1
             ? urls[0].deletingPathExtension().lastPathComponent
-            : "壓縮檔"
+            : L("壓縮檔")
         let input = NSTextField(string: defaultName)
         input.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
         let alert = NSAlert()
-        alert.messageText = "壓縮成 ZIP"
-        alert.informativeText = "輸入 ZIP 名稱："
+        alert.messageText = L("壓縮成 ZIP")
+        alert.informativeText = L("輸入 ZIP 名稱：")
         alert.accessoryView = input
-        alert.addButton(withTitle: "壓縮")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L("壓縮"))
+        alert.addButton(withTitle: L("取消"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let name = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isValidFileName(name) else { return }
@@ -1145,7 +1245,7 @@ final class PaneViewController: NSViewController {
             OperationStatusCenter.shared.finish()
             DispatchQueue.main.async {
                 if case .failure(let error) = result {
-                    self.showMessage(title: "壓縮唔到", message: ErrorMessage.text(for: error))
+                    self.showMessage(title: L("壓縮唔到"), message: ErrorMessage.text(for: error))
                 }
                 NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
             }
@@ -1158,7 +1258,7 @@ final class PaneViewController: NSViewController {
             $0.pathExtension.lowercased() == "zip"
         }
         guard !urls.isEmpty else {
-            showMessage(title: "未揀 ZIP", message: "請先揀一個或多個 ZIP 檔案。")
+            showMessage(title: L("未揀 ZIP"), message: L("請先揀一個或多個 ZIP 檔案。"))
             return
         }
         OperationStatusCenter.shared.begin(count: urls.count)
@@ -1174,7 +1274,7 @@ final class PaneViewController: NSViewController {
             }
             DispatchQueue.main.async {
                 if let firstError {
-                    self.showMessage(title: "有 ZIP 解唔到", message: ErrorMessage.text(for: firstError))
+                    self.showMessage(title: L("有 ZIP 解唔到"), message: ErrorMessage.text(for: firstError))
                 }
                 NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
             }
@@ -1187,7 +1287,7 @@ final class PaneViewController: NSViewController {
             .filter { $0.cloudAvailability == .onlineOnly || $0.cloudAvailability == .downloading }
             .map(\.url)
         guard !urls.isEmpty else {
-            showMessage(title: "已經在本機", message: "所選檔案唔需要另外下載。")
+            showMessage(title: L("已經在本機"), message: L("所選檔案唔需要另外下載。"))
             return
         }
         OperationStatusCenter.shared.begin(count: urls.count)
@@ -1209,7 +1309,7 @@ final class PaneViewController: NSViewController {
             }
             DispatchQueue.main.async {
                 if let firstError {
-                    self.showMessage(title: "下載唔到", message: ErrorMessage.text(for: firstError))
+                    self.showMessage(title: L("下載唔到"), message: ErrorMessage.text(for: firstError))
                 }
                 self.reloadItems()
             }
@@ -1235,11 +1335,35 @@ final class PaneViewController: NSViewController {
         )
     }
 
+    func copyForSync(_ operations: [SyncOperation], completion: (() -> Void)? = nil) {
+        let groups = Dictionary(grouping: operations) {
+            $0.destinationFolder.standardizedFileURL.path
+        }
+        let destinations = Array(groups.keys)
+        func run(_ index: Int) {
+            guard index < destinations.count else {
+                completion?()
+                return
+            }
+            let destination = URL(fileURLWithPath: destinations[index], isDirectory: true)
+            let urls = groups[destinations[index]]?.map(\.source) ?? []
+            FileTransferCoordinator.shared.transfer(
+                sources: urls,
+                to: destination,
+                operation: .copy,
+                undoManager: view.window?.undoManager,
+                collisionChoice: .replace,
+                completion: { run(index + 1) }
+            )
+        }
+        run(0)
+    }
+
     func moveSelectedItemsToTrash() {
         didActivate?(self)
         let urls = fileTableController.selectedURLs()
         guard !urls.isEmpty else {
-            showMessage(title: "未揀檔案", message: "請先揀要搬去垃圾桶嘅項目。")
+            showMessage(title: L("未揀檔案"), message: L("請先揀要搬去垃圾桶嘅項目。"))
             return
         }
 
@@ -1253,6 +1377,8 @@ final class PaneViewController: NSViewController {
                     try FileManager.default.trashItem(at: url, resultingItemURL: &trashedNSURL)
                     if let trashedURL = trashedNSURL as URL? {
                         moved.append((url, trashedURL))
+                    } else if FileManager.default.fileExists(atPath: url.path) {
+                        errors.append(FileOperationError.undoSourceMissing)
                     }
                 } catch {
                     errors.append(error)
@@ -1264,10 +1390,10 @@ final class PaneViewController: NSViewController {
                     self.view.window?.undoManager?.registerUndo(withTarget: self) { target in
                         target.undoTrash(moved)
                     }
-                    self.view.window?.undoManager?.setActionName("搬去垃圾桶")
+                    self.view.window?.undoManager?.setActionName(L("搬去垃圾桶"))
                 }
                 if let error = errors.first {
-                    self.showMessage(title: "有項目搬唔到", message: ErrorMessage.text(for: error))
+                    self.showMessage(title: L("有項目搬唔到"), message: ErrorMessage.text(for: error))
                 }
                 NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
             }
@@ -1275,15 +1401,30 @@ final class PaneViewController: NSViewController {
     }
 
     @objc private func goBack() {
-        guard historyIndex > 0 else { return }
-        historyIndex -= 1
-        navigate(to: history[historyIndex], recordingHistory: false)
+        moveHistory(step: -1)
     }
 
     @objc private func goForward() {
-        guard historyIndex + 1 < history.count else { return }
-        historyIndex += 1
-        navigate(to: history[historyIndex], recordingHistory: false)
+        moveHistory(step: 1)
+    }
+
+    private func moveHistory(step: Int) {
+        var newIndex = historyIndex + step
+        while newIndex >= 0, newIndex < history.count {
+            let target = history[newIndex]
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory),
+               isDirectory.boolValue {
+                navigate(to: target, recordingHistory: false)
+                guard currentDirectory.standardizedFileURL == target.standardizedFileURL else {
+                    return
+                }
+                historyIndex = newIndex
+                updateNavigationButtons()
+                return
+            }
+            newIndex += step
+        }
     }
 
     @objc private func goUp() {
@@ -1398,7 +1539,7 @@ final class PaneViewController: NSViewController {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
-            showMessage(title: "搵唔到資料夾", message: "請輸入一條存在嘅資料夾路徑。")
+            showMessage(title: L("搵唔到資料夾"), message: L("請輸入一條存在嘅資料夾路徑。"))
             addressField.becomeFirstResponder()
             addressField.selectText(nil)
             return
@@ -1447,24 +1588,24 @@ final class PaneViewController: NSViewController {
             progressIndicator.doubleValue = progress.fractionCompleted
 
             let completed = min(progress.totalItems, progress.completedItems + 1)
-            var parts = ["處理緊 \(completed)/\(progress.totalItems)"]
+            var parts = [String(format: L("處理緊 %ld/%ld"), completed, progress.totalItems)]
             if progress.totalBytes > 0 {
                 parts.append("\(Int(progress.fractionCompleted * 100))%")
                 let speed = Int64(progress.bytesPerSecond)
                 if speed > 0 {
-                    parts.append("\(FileFormatting.byteFormatter.string(fromByteCount: speed))/秒")
+                    parts.append(String(format: L("%@/秒"), FileFormatting.byteFormatter.string(fromByteCount: speed)))
                 }
                 if let remaining = progress.estimatedRemaining, remaining.isFinite {
-                    parts.append("約 \(max(1, Int(remaining.rounded()))) 秒")
+                    parts.append(String(format: L("約 %ld 秒"), max(1, Int(remaining.rounded()))))
                 }
             }
             statusLabel.stringValue = progress.isCancellationRequested
-                ? "正在停止…"
+                ? L("正在停止…")
                 : parts.joined(separator: " · ")
         } else if OperationStatusCenter.shared.isBusy {
             progressIndicator.isHidden = true
             cancelOperationButton.isHidden = true
-            statusLabel.stringValue = "正在處理檔案…"
+            statusLabel.stringValue = L("正在處理檔案…")
         } else {
             progressIndicator.isHidden = true
             cancelOperationButton.isHidden = true
@@ -1492,17 +1633,17 @@ final class PaneViewController: NSViewController {
         )
         fileTableController.reload(items: displayedItems, currentDirectory: currentDirectory)
         if OperationStatusCenter.shared.isBusy {
-            statusLabel.stringValue = "正在處理檔案…"
+            statusLabel.stringValue = L("正在處理檔案…")
         } else if searchField.stringValue.isEmpty {
-            statusLabel.stringValue = "\(displayedItems.count) 個項目"
+            statusLabel.stringValue = String(format: L("%ld 個項目"), displayedItems.count)
         } else {
-            statusLabel.stringValue = "搵到 \(displayedItems.count) / \(allItems.count) 個"
+            statusLabel.stringValue = String(format: L("搵到 %ld / %ld 個"), displayedItems.count, allItems.count)
         }
     }
 
     private func updateSortDirectionButton() {
         let symbol = sortAscending ? "arrow.up" : "arrow.down"
-        let description = sortAscending ? "由細至大" : "由大至細"
+        let description = sortAscending ? L("由細至大") : L("由大至細")
         sortDirectionButton.image = NSImage(
             systemSymbolName: symbol,
             accessibilityDescription: description
@@ -1532,17 +1673,17 @@ final class PaneViewController: NSViewController {
         }
         favoriteButton.image = NSImage(
             systemSymbolName: isFavorite ? "star.fill" : "star",
-            accessibilityDescription: isFavorite ? "取消收藏" : "收藏目前資料夾"
+            accessibilityDescription: isFavorite ? L("取消收藏") : L("收藏目前資料夾")
         )
-        favoriteButton.toolTip = isFavorite ? "取消收藏" : "收藏目前資料夾"
+        favoriteButton.toolTip = isFavorite ? L("取消收藏") : L("收藏目前資料夾")
     }
 
     private func updateHiddenFilesButton() {
         hiddenFilesButton.image = NSImage(
             systemSymbolName: showHiddenFiles ? "eye" : "eye.slash",
-            accessibilityDescription: showHiddenFiles ? "隱藏隱藏檔案" : "顯示隱藏檔案"
+            accessibilityDescription: showHiddenFiles ? L("隱藏隱藏檔案") : L("顯示隱藏檔案")
         )
-        hiddenFilesButton.toolTip = showHiddenFiles ? "隱藏隱藏檔案" : "顯示隱藏檔案"
+        hiddenFilesButton.toolTip = showHiddenFiles ? L("隱藏隱藏檔案") : L("顯示隱藏檔案")
     }
 
     private func open(_ item: FileItem) {
@@ -1639,11 +1780,11 @@ final class PaneViewController: NSViewController {
         let parent = sourceURL.deletingLastPathComponent()
         let pathExtension = sourceURL.pathExtension
         if pathExtension.isEmpty || sourceURL.hasDirectoryPath {
-            return parent.appendingPathComponent("\(sourceURL.lastPathComponent) 的替身")
+            return parent.appendingPathComponent("\(sourceURL.lastPathComponent)" + L(" 的替身"))
         }
         let name = sourceURL.deletingPathExtension().lastPathComponent
         return parent
-            .appendingPathComponent("\(name) 的替身")
+            .appendingPathComponent("\(name)" + L(" 的替身"))
             .appendingPathExtension(pathExtension)
     }
 
@@ -1667,13 +1808,16 @@ final class PaneViewController: NSViewController {
                     to: pair.original
                 )
             }
-            try FileManager.default.removeItem(at: folderURL)
+            let remaining = try FileManager.default.contentsOfDirectory(atPath: folderURL.path)
+            if remaining.isEmpty {
+                try FileManager.default.removeItem(at: folderURL)
+            }
             NotificationCenter.default.post(
                 name: .finderV2FileSystemChanged,
                 object: nil
             )
         } catch {
-            showMessage(title: "未能還原", message: ErrorMessage.text(for: error))
+            showMessage(title: L("未能還原"), message: ErrorMessage.text(for: error))
         }
     }
 
@@ -1687,7 +1831,7 @@ final class PaneViewController: NSViewController {
                 object: nil
             )
         } catch {
-            showMessage(title: "未能還原", message: ErrorMessage.text(for: error))
+            showMessage(title: L("未能還原"), message: ErrorMessage.text(for: error))
         }
     }
 
@@ -1699,7 +1843,7 @@ final class PaneViewController: NSViewController {
             try FileManager.default.trashItem(at: url, resultingItemURL: &ignored)
             NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
         } catch {
-            showMessage(title: "未能還原", message: ErrorMessage.text(for: error))
+            showMessage(title: L("未能還原"), message: ErrorMessage.text(for: error))
         }
     }
 
@@ -1708,10 +1852,14 @@ final class PaneViewController: NSViewController {
             guard !FileManager.default.fileExists(atPath: oldURL.path) else {
                 throw FileOperationError.undoDestinationOccupied
             }
-            try FileManager.default.moveItem(at: currentURL, to: oldURL)
+            try FileRenameSupport.moveItem(from: currentURL, to: oldURL)
+            view.window?.undoManager?.registerUndo(withTarget: self) { target in
+                target.undoRename(from: oldURL, to: currentURL)
+            }
+            view.window?.undoManager?.setActionName(L("改名"))
             NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
         } catch {
-            showMessage(title: "未能還原", message: ErrorMessage.text(for: error))
+            showMessage(title: L("未能還原"), message: ErrorMessage.text(for: error))
         }
     }
 
@@ -1725,7 +1873,7 @@ final class PaneViewController: NSViewController {
             }
             NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
         } catch {
-            showMessage(title: "未能還原", message: ErrorMessage.text(for: error))
+            showMessage(title: L("未能還原"), message: ErrorMessage.text(for: error))
         }
     }
 
@@ -1737,28 +1885,23 @@ final class PaneViewController: NSViewController {
             }
             NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
         } catch {
-            showMessage(title: "未能還原", message: ErrorMessage.text(for: error))
+            showMessage(title: L("未能還原"), message: ErrorMessage.text(for: error))
         }
     }
 
     private func undoBatchRename(_ pairs: [(old: URL, new: URL)]) {
         do {
-            var temporary: [(old: URL, temporary: URL)] = []
-            for pair in pairs.reversed() where FileManager.default.fileExists(atPath: pair.new.path) {
-                let temp = pair.new.deletingLastPathComponent()
-                    .appendingPathComponent(".FinderV2UndoRename-\(UUID().uuidString)")
-                try FileManager.default.moveItem(at: pair.new, to: temp)
-                temporary.append((pair.old, temp))
+            let reversedItems = pairs.reversed().compactMap { pair -> FileItem? in
+                FileItem.loadItem(at: pair.new)
             }
-            for pair in temporary {
-                guard !FileManager.default.fileExists(atPath: pair.old.path) else {
-                    throw FileOperationError.undoDestinationOccupied
-                }
-                try FileManager.default.moveItem(at: pair.temporary, to: pair.old)
+            let originalNames = pairs.reversed().map { $0.old.lastPathComponent }
+            guard reversedItems.count == pairs.count else {
+                throw FileOperationError.undoSourceMissing
             }
+            _ = try BatchRenameEngine.apply(items: reversedItems, names: originalNames)
             NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
         } catch {
-            showMessage(title: "未能還原", message: ErrorMessage.text(for: error))
+            showMessage(title: L("未能還原"), message: ErrorMessage.text(for: error))
         }
     }
 
@@ -1767,7 +1910,7 @@ final class PaneViewController: NSViewController {
         alert.alertStyle = .warning
         alert.messageText = title
         alert.informativeText = message
-        alert.addButton(withTitle: "知道")
+        alert.addButton(withTitle: L("知道"))
         alert.runModal()
     }
 }

@@ -175,7 +175,7 @@ final class OperationStatusCenter {
     }
 }
 
-private struct TransferRequest {
+struct TransferRequest {
     let source: URL
     let destination: URL
     let operation: FileTransferOperation
@@ -223,8 +223,18 @@ enum DirectoryUseInspector {
             return nil
         }
 
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        let group = DispatchGroup()
+        group.enter()
+        var data = Data()
+        DispatchQueue.global(qos: .userInitiated).async {
+            data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            group.leave()
+        }
+        if group.wait(timeout: .now() + 2) == .timedOut {
+            process.terminate()
+            return nil
+        }
         guard let text = String(data: data, encoding: .utf8) else { return nil }
         return processName(
             fromLsofOutput: text,
@@ -261,7 +271,7 @@ enum DirectoryUseInspector {
                     || lowercased == "npm"
                     || lowercased == "vite"
                     || lowercased == "esbuild" {
-                    return "網站預覽程式"
+                    return L("網站預覽程式")
                 }
                 return currentCommand
             default:
@@ -390,18 +400,14 @@ enum FileActionEngine {
                 at: coordinatedSource,
                 willMoveTo: coordinatedDestination
             )
-            defer {
-                // File presenters need the matching completion callback even
-                // when FileManager fails part-way through the move.
-                coordinator.item(
-                    at: coordinatedSource,
-                    didMoveTo: coordinatedDestination
-                )
-            }
             do {
                 try fileManager.moveItem(
                     at: coordinatedSource,
                     to: coordinatedDestination
+                )
+                coordinator.item(
+                    at: coordinatedSource,
+                    didMoveTo: coordinatedDestination
                 )
                 result = CoordinatedMoveResult(
                     source: coordinatedSource,
@@ -516,6 +522,9 @@ enum FileActionEngine {
         progress: ((Int64) -> Void)?,
         isCancelled: (() -> Bool)?
     ) throws {
+        if fileManager.fileExists(atPath: destination.path) {
+            throw CocoaError(.fileWriteFileExists)
+        }
         guard fileManager.createFile(atPath: destination.path, contents: nil) else {
             throw CocoaError(.fileWriteUnknown)
         }
@@ -542,9 +551,24 @@ enum FileActionEngine {
             if let attributes = try? fileManager.attributesOfItem(atPath: source.path) {
                 try? fileManager.setAttributes(attributes, ofItemAtPath: destination.path)
             }
+            copyExtendedAttributes(from: source, to: destination)
         } catch {
             try? fileManager.removeItem(at: destination)
             throw error
+        }
+    }
+
+    private static func copyExtendedAttributes(from source: URL, to destination: URL) {
+        _ = source.withUnsafeFileSystemRepresentation { sourcePath in
+            destination.withUnsafeFileSystemRepresentation { destinationPath -> Int32 in
+                guard let sourcePath, let destinationPath else { return -1 }
+                return copyfile(
+                    sourcePath,
+                    destinationPath,
+                    nil,
+                    copyfile_flags_t(COPYFILE_XATTR | COPYFILE_ACL)
+                )
+            }
         }
     }
 }
@@ -563,58 +587,25 @@ final class FileTransferCoordinator: NSObject {
         precondition(Thread.isMainThread)
 
         let fileManager = FileManager.default
-        var requests: [TransferRequest] = []
         var rememberedChoice = collisionChoice
-
-        for source in sources {
-            let standardizedSource = source.standardizedFileURL
-            var destination = destinationFolder
-                .appendingPathComponent(source.lastPathComponent)
-                .standardizedFileURL
-
-            if standardizedSource == destination {
-                continue
-            }
-
-            if isFolder(destinationFolder, inside: standardizedSource) {
+        var reservedPaths = Set<String>()
+        let requests = Self.planRequests(
+            sources: sources,
+            destinationFolder: destinationFolder,
+            operation: operation,
+            fileManager: fileManager,
+            reservedPaths: &reservedPaths,
+            rememberedChoice: &rememberedChoice,
+            onFolderIntoSelf: {
                 presentMessage(
-                    title: "唔可以搬入去",
-                    message: "資料夾唔可以搬入自己入面。"
+                    title: L("唔可以搬入去"),
+                    message: L("資料夾唔可以搬入自己入面。")
                 )
-                continue
+            },
+            askCollision: { name in
+                askCollision(for: name)
             }
-
-            var replaceExisting = false
-            if fileManager.fileExists(atPath: destination.path) {
-                let choice: CollisionChoice
-                if let rememberedChoice {
-                    choice = rememberedChoice
-                } else {
-                    let answer = askCollision(for: source.lastPathComponent)
-                    choice = answer.choice
-                    if answer.applyToAll {
-                        rememberedChoice = answer.choice
-                    }
-                }
-                switch choice {
-                case .cancel:
-                    continue
-                case .replace:
-                    replaceExisting = true
-                case .keepBoth:
-                    destination = Self.availableURL(for: destination, fileManager: fileManager)
-                }
-            }
-
-            requests.append(
-                TransferRequest(
-                    source: standardizedSource,
-                    destination: destination,
-                    operation: operation,
-                    replaceExisting: replaceExisting
-                )
-            )
-        }
+        )
 
         guard !requests.isEmpty else {
             completion?()
@@ -626,9 +617,9 @@ final class FileTransferCoordinator: NSObject {
                 .map(Int64.init) ?? 0
             return total + size
         }
-        let actionName = operation == .copy ? "複製" : "搬移"
+        let actionName = operation == .copy ? L("複製") : L("搬移")
         TransferQueueCenter.shared.enqueue(
-            title: "\(actionName) \(requests.count) 個項目"
+            title: String(format: L("%@ %ld 個項目"), actionName, requests.count)
         ) { shouldStop in
             OperationStatusCenter.shared.beginDetailed(
                 totalItems: requests.count,
@@ -693,9 +684,91 @@ final class FileTransferCoordinator: NSObject {
         }
     }
 
-    static func availableURL(for desiredURL: URL, fileManager: FileManager = .default) -> URL {
-        guard fileManager.fileExists(atPath: desiredURL.path) else { return desiredURL }
+    static func planRequests(
+        sources: [URL],
+        destinationFolder: URL,
+        operation: FileTransferOperation,
+        fileManager: FileManager = .default,
+        reservedPaths: inout Set<String>,
+        rememberedChoice: inout CollisionChoice?,
+        onFolderIntoSelf: () -> Void = {},
+        askCollision: (String) -> (choice: CollisionChoice, applyToAll: Bool)
+    ) -> [TransferRequest] {
+        var requests: [TransferRequest] = []
 
+        for source in sources {
+            let standardizedSource = source.standardizedFileURL
+            var destination = destinationFolder
+                .appendingPathComponent(source.lastPathComponent)
+                .standardizedFileURL
+
+            if standardizedSource == destination {
+                continue
+            }
+
+            if isFolder(destinationFolder, inside: standardizedSource) {
+                onFolderIntoSelf()
+                continue
+            }
+
+            var replaceExisting = false
+            let destinationPath = destination.path
+            let reserved = reservedPaths.contains(destinationPath)
+            let existsOnDisk = fileManager.fileExists(atPath: destinationPath)
+
+            if existsOnDisk || reserved {
+                let choice: CollisionChoice
+                if let rememberedChoice {
+                    choice = rememberedChoice
+                } else {
+                    let answer = askCollision(source.lastPathComponent)
+                    choice = answer.choice
+                    if answer.applyToAll {
+                        rememberedChoice = answer.choice
+                    }
+                }
+                switch choice {
+                case .cancel:
+                    continue
+                case .replace:
+                    if reserved {
+                        // 呢個名已經預留給同一個批次入面另一個檔，唔可以覆蓋。
+                        destination = availableURL(
+                            for: destination,
+                            fileManager: fileManager,
+                            reservedPaths: reservedPaths
+                        )
+                    } else {
+                        replaceExisting = true
+                    }
+                case .keepBoth:
+                    destination = availableURL(
+                        for: destination,
+                        fileManager: fileManager,
+                        reservedPaths: reservedPaths
+                    )
+                }
+            }
+
+            reservedPaths.insert(destination.path)
+            requests.append(
+                TransferRequest(
+                    source: standardizedSource,
+                    destination: destination,
+                    operation: operation,
+                    replaceExisting: replaceExisting
+                )
+            )
+        }
+
+        return requests
+    }
+
+    static func availableURL(
+        for desiredURL: URL,
+        fileManager: FileManager = .default,
+        reservedPaths: Set<String> = []
+    ) -> URL {
         let parent = desiredURL.deletingLastPathComponent()
         let extensionName = desiredURL.pathExtension
         let baseName: String
@@ -705,13 +778,22 @@ final class FileTransferCoordinator: NSObject {
             baseName = desiredURL.deletingPathExtension().lastPathComponent
         }
 
+        func isFree(_ url: URL) -> Bool {
+            !fileManager.fileExists(atPath: url.path)
+                && !reservedPaths.contains(url.path)
+        }
+
+        if isFree(desiredURL) {
+            return desiredURL
+        }
+
         var number = 2
         while true {
             let candidateName = extensionName.isEmpty
                 ? "\(baseName) \(number)"
                 : "\(baseName) \(number).\(extensionName)"
             let candidate = parent.appendingPathComponent(candidateName)
-            if !fileManager.fileExists(atPath: candidate.path) {
+            if isFree(candidate) {
                 return candidate
             }
             number += 1
@@ -720,69 +802,120 @@ final class FileTransferCoordinator: NSObject {
 
     private func registerUndo(for transfers: [CompletedTransfer], with undoManager: UndoManager?) {
         guard let undoManager else { return }
-        undoManager.beginUndoGrouping()
-        for transfer in transfers {
-            undoManager.registerUndo(withTarget: self) { coordinator in
-                coordinator.undo(transfer)
-            }
+        undoManager.registerUndo(withTarget: self) { coordinator in
+            coordinator.undo(transfers, undoManager: undoManager)
         }
-        undoManager.endUndoGrouping()
-        undoManager.setActionName(transfers.count > 1 ? "搬移 \(transfers.count) 個項目" : "搬移項目")
+        undoManager.setActionName(Self.undoActionName(for: transfers))
     }
 
-    private func undo(_ transfer: CompletedTransfer) {
-        let fileManager = FileManager.default
+    private static func undoActionName(for transfers: [CompletedTransfer]) -> String {
+        let isCopy = transfers.allSatisfy { $0.operation == .copy }
+        if transfers.count > 1 {
+            return String(format: isCopy ? L("複製 %ld 個項目") : L("搬移 %ld 個項目"), transfers.count)
+        }
+        return isCopy ? L("複製項目") : L("搬移項目")
+    }
+
+    private func undo(_ transfers: [CompletedTransfer], undoManager: UndoManager?) {
         OperationStatusCenter.shared.begin()
         DispatchQueue.global(qos: .userInitiated).async {
-            var caughtError: Error?
-            do {
-                switch transfer.operation {
-                case .move:
-                    guard !fileManager.fileExists(atPath: transfer.source.path) else {
-                        throw FileOperationError.undoDestinationOccupied
-                    }
-                    guard fileManager.fileExists(atPath: transfer.destination.path) else {
-                        throw FileOperationError.undoSourceMissing
-                    }
-                    _ = try FileActionEngine.transfer(
-                        source: transfer.destination,
-                        destination: transfer.source,
-                        operation: .move,
-                        replaceExisting: false,
-                        fileManager: fileManager
-                    )
-                case .copy:
-                    var ignored: NSURL?
-                    try fileManager.trashItem(at: transfer.destination, resultingItemURL: &ignored)
+            var errors: [Error] = []
+            for transfer in transfers.reversed() {
+                do {
+                    try self.performUndo(transfer)
+                } catch {
+                    errors.append(error)
                 }
-
-                if let oldItem = transfer.replacedItemInTrash,
-                   !fileManager.fileExists(atPath: transfer.destination.path) {
-                    try fileManager.moveItem(at: oldItem, to: transfer.destination)
-                }
-            } catch {
-                caughtError = error
             }
 
             OperationStatusCenter.shared.finish()
             DispatchQueue.main.async {
-                if let caughtError {
-                    self.presentOperationError(caughtError, extraCount: 0)
+                undoManager?.registerUndo(withTarget: self) { coordinator in
+                    coordinator.redo(transfers, undoManager: undoManager)
+                }
+                undoManager?.setActionName(Self.undoActionName(for: transfers))
+                if let firstError = errors.first {
+                    self.presentOperationError(firstError, extraCount: max(0, errors.count - 1))
                 }
                 NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
             }
         }
     }
 
+    private func redo(_ transfers: [CompletedTransfer], undoManager: UndoManager?) {
+        OperationStatusCenter.shared.begin()
+        DispatchQueue.global(qos: .userInitiated).async {
+            var errors: [Error] = []
+            for transfer in transfers {
+                do {
+                    try self.performRedo(transfer)
+                } catch {
+                    errors.append(error)
+                }
+            }
+
+            OperationStatusCenter.shared.finish()
+            DispatchQueue.main.async {
+                undoManager?.registerUndo(withTarget: self) { coordinator in
+                    coordinator.undo(transfers, undoManager: undoManager)
+                }
+                undoManager?.setActionName(Self.undoActionName(for: transfers))
+                if let firstError = errors.first {
+                    self.presentOperationError(firstError, extraCount: max(0, errors.count - 1))
+                }
+                NotificationCenter.default.post(name: .finderV2FileSystemChanged, object: nil)
+            }
+        }
+    }
+
+    private func performUndo(_ transfer: CompletedTransfer) throws {
+        let fileManager = FileManager.default
+        switch transfer.operation {
+        case .move:
+            guard !fileManager.fileExists(atPath: transfer.source.path) else {
+                throw FileOperationError.undoDestinationOccupied
+            }
+            guard fileManager.fileExists(atPath: transfer.destination.path) else {
+                throw FileOperationError.undoSourceMissing
+            }
+            _ = try FileActionEngine.transfer(
+                source: transfer.destination,
+                destination: transfer.source,
+                operation: .move,
+                replaceExisting: false,
+                fileManager: fileManager
+            )
+        case .copy:
+            var ignored: NSURL?
+            try fileManager.trashItem(at: transfer.destination, resultingItemURL: &ignored)
+        }
+
+        if let oldItem = transfer.replacedItemInTrash,
+           !fileManager.fileExists(atPath: transfer.destination.path) {
+            try fileManager.moveItem(at: oldItem, to: transfer.destination)
+        }
+    }
+
+    private func performRedo(_ transfer: CompletedTransfer) throws {
+        let fileManager = FileManager.default
+        _ = try FileActionEngine.transfer(
+            source: transfer.source,
+            destination: transfer.destination,
+            operation: transfer.operation,
+            replaceExisting: transfer.replacedItemInTrash != nil,
+            fileManager: fileManager
+        )
+    }
+
     private func askCollision(for name: String) -> (choice: CollisionChoice, applyToAll: Bool) {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "已經有同名檔案"
-        alert.informativeText = "「\(name)」已經存在，你想點做？"
-        alert.addButton(withTitle: "保留兩個")
-        alert.addButton(withTitle: "取代")
-        alert.addButton(withTitle: "略過")
-        let checkbox = NSButton(checkboxWithTitle: "之後全部用呢個選擇", target: nil, action: nil)
+        alert.messageText = L("已經有同名檔案")
+        alert.informativeText = String(format: L("「%@」已經存在，你想點做？"), name)
+        alert.addButton(withTitle: L("保留兩個"))
+        alert.addButton(withTitle: L("取代"))
+        alert.addButton(withTitle: L("略過"))
+        let checkbox = NSButton(checkboxWithTitle: L("之後全部用呢個選擇"), target: nil, action: nil)
         checkbox.frame = NSRect(x: 0, y: 0, width: 220, height: 24)
         alert.accessoryView = checkbox
 
@@ -798,7 +931,7 @@ final class FileTransferCoordinator: NSObject {
         return (choice, checkbox.state == .on)
     }
 
-    private func isFolder(_ possibleChild: URL, inside possibleParent: URL) -> Bool {
+    private static func isFolder(_ possibleChild: URL, inside possibleParent: URL) -> Bool {
         let childPath = possibleChild.standardizedFileURL.path
         let parentPath = possibleParent.standardizedFileURL.path
         return childPath == parentPath || childPath.hasPrefix(parentPath + "/")
@@ -807,24 +940,24 @@ final class FileTransferCoordinator: NSObject {
     private func presentOperationError(_ error: Error, extraCount: Int) {
         var message = ErrorMessage.text(for: error)
         if extraCount > 0 {
-            message += "\n另外有 \(extraCount) 個項目未能完成。"
+            message += String(format: L("\n另外有 %ld 個項目未能完成。"), extraCount)
         }
         let title: String
         if let fileError = error as? FileOperationError {
             switch fileError {
             case .folderInUse:
-                title = "資料夾使用中"
+                title = L("資料夾使用中")
             case .moveSourceRecreated:
-                title = "舊資料夾再次出現"
+                title = L("舊資料夾再次出現")
             case .moveSourceNotRemoved:
-                title = "搬移未完全完成"
+                title = L("搬移未完全完成")
             case .moveSourceRecovered, .moveSourceRecoveryFailed, .replacementRecoveryFailed:
-                title = "檔案已安全保留"
+                title = L("檔案已安全保留")
             default:
-                title = "做唔到呢個操作"
+                title = L("做唔到呢個操作")
             }
         } else {
-            title = "做唔到呢個操作"
+            title = L("做唔到呢個操作")
         }
         presentMessage(title: title, message: message)
     }
@@ -834,8 +967,49 @@ final class FileTransferCoordinator: NSObject {
         alert.alertStyle = .warning
         alert.messageText = title
         alert.informativeText = message
-        alert.addButton(withTitle: "知道")
+        alert.addButton(withTitle: L("知道"))
         alert.runModal()
+    }
+}
+
+enum FileRenameSupport {
+    static func isSameItem(_ source: URL, as destination: URL) -> Bool {
+        guard let sourceIdentity = FileSystemIdentity.read(from: source),
+              let destinationIdentity = FileSystemIdentity.read(from: destination) else {
+            return source.standardizedFileURL == destination.standardizedFileURL
+        }
+        return sourceIdentity == destinationIdentity
+    }
+
+    static func existsAsDifferentItem(
+        _ destination: URL,
+        source: URL,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        guard fileManager.fileExists(atPath: destination.path) else { return false }
+        return !isSameItem(source, as: destination)
+    }
+
+    static func moveItem(
+        from source: URL,
+        to destination: URL,
+        fileManager: FileManager = .default
+    ) throws {
+        if fileManager.fileExists(atPath: destination.path),
+           isSameItem(source, as: destination),
+           source.standardizedFileURL != destination.standardizedFileURL {
+            let temporary = source.deletingLastPathComponent()
+                .appendingPathComponent(".FinderV2Rename-\(UUID().uuidString)")
+            try fileManager.moveItem(at: source, to: temporary)
+            do {
+                try fileManager.moveItem(at: temporary, to: destination)
+            } catch {
+                try? fileManager.moveItem(at: temporary, to: source)
+                throw error
+            }
+            return
+        }
+        try fileManager.moveItem(at: source, to: destination)
     }
 }
 
@@ -855,27 +1029,27 @@ enum FileOperationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .undoDestinationOccupied:
-            return "原本位置而家已有同名檔案，所以未能還原。"
+            return L("原本位置而家已有同名檔案，所以未能還原。")
         case .undoSourceMissing:
-            return "搬移後嘅檔案已經搵唔到，所以未能還原。請先檢查新位置。"
+            return L("搬移後嘅檔案已經搵唔到，所以未能還原。請先檢查新位置。")
         case .folderNotEmpty:
-            return "資料夾入面已有檔案，為免刪錯，所以未能還原。"
+            return L("資料夾入面已有檔案，為免刪錯，所以未能還原。")
         case .cancelled:
-            return "操作已取消。"
+            return L("操作已取消。")
         case .moveDestinationMissing:
-            return "搬移未完成，新位置搵唔到檔案。請檢查原本位置同新位置。"
+            return L("搬移未完成，新位置搵唔到檔案。請檢查原本位置同新位置。")
         case .moveSourceNotRemoved:
-            return "新位置已有檔案，但舊位置仲有內容。為免刪錯，舊資料夾已保留，請檢查兩邊。"
+            return L("新位置已有檔案，但舊位置仲有內容。為免刪錯，舊資料夾已保留，請檢查兩邊。")
         case .moveSourceRecreated:
-            return "檔案已搬到新位置，但有程式仲用緊舊資料夾，並喺舊位置重新整咗檔案。請先關閉相關程式，再檢查舊資料夾。"
+            return L("檔案已搬到新位置，但有程式仲用緊舊資料夾，並喺舊位置重新整咗檔案。請先關閉相關程式，再檢查舊資料夾。")
         case let .folderInUse(processName):
-            return "「\(processName)」仲用緊呢個資料夾。請先關閉佢，再搬一次。"
+            return String(format: L("「%@」仲用緊呢個資料夾。請先關閉佢，再搬一次。"), processName)
         case let .moveSourceRecovered(name):
-            return "為免刪錯，舊資料已安全保留為「\(name)」。請檢查新舊兩邊。"
+            return String(format: L("為免刪錯，舊資料已安全保留為「%@」。請檢查新舊兩邊。"), name)
         case .moveSourceRecoveryFailed:
-            return "為免刪錯，舊資料已保留，但未能放回原名。請重新整理後檢查新舊兩邊。"
+            return L("為免刪錯，舊資料已保留，但未能放回原名。請重新整理後檢查新舊兩邊。")
         case .replacementRecoveryFailed:
-            return "新舊檔案都有安全保留，但未能自動放回原位。請打開垃圾桶及目標資料夾檢查。"
+            return L("新舊檔案都有安全保留，但未能自動放回原位。請打開垃圾桶及目標資料夾檢查。")
         }
     }
 }
@@ -890,13 +1064,13 @@ enum ErrorMessage {
         if nsError.domain == NSCocoaErrorDomain {
             switch nsError.code {
             case NSFileReadNoPermissionError, NSFileWriteNoPermissionError:
-                return "呢個位置冇權限。你可以喺 Mac 設定俾 Finder v2.0 存取檔案。"
+                return L("呢個位置冇權限。你可以喺 Mac 設定俾 Finder v2.0 存取檔案。")
             case NSFileWriteOutOfSpaceError:
-                return "儲存空間唔夠，請先清理磁碟。"
+                return L("儲存空間唔夠，請先清理磁碟。")
             case NSFileNoSuchFileError, NSFileReadNoSuchFileError:
-                return "檔案已經唔喺原本位置，請按重新整理。"
+                return L("檔案已經唔喺原本位置，請按重新整理。")
             case NSFileWriteFileExistsError:
-                return "目標位置已有同名檔案。"
+                return L("目標位置已有同名檔案。")
             default:
                 break
             }

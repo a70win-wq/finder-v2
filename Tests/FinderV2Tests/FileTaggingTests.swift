@@ -19,6 +19,30 @@ struct FileTaggingTests {
         #expect(try readStoredTagsIfPresent(at: fileURL) == nil)
     }
 
+    @Test("複製普通檔案會保留顏色標籤")
+    func copyPreservesFinderTags() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FinderV2TagCopy-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let source = directory.appendingPathComponent("來源.txt")
+        let destination = directory.appendingPathComponent("副本.txt")
+        try Data("tagged".utf8).write(to: source)
+        try FileTagEngine.apply(.blue, to: [source])
+
+        _ = try FileActionEngine.transfer(
+            source: source,
+            destination: destination,
+            operation: .copy,
+            replaceExisting: false,
+            progress: { _ in },
+            isCancelled: { false }
+        )
+
+        #expect(try readStoredTags(at: destination) == [FinderTag.blue.metadataValue])
+    }
+
     private func readStoredTags(at url: URL) throws -> [String] {
         guard let tags = try readStoredTagsIfPresent(at: url) else {
             throw NSError(

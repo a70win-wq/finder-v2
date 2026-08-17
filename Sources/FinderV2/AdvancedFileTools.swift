@@ -17,10 +17,14 @@ struct FolderComparisonResult {
 }
 
 enum FolderComparisonEngine {
-    static func compare(left: [FileItem], right: [FileItem]) -> FolderComparisonResult {
-        // 保留原本檔名大小寫，避免大小寫敏感磁碟上將兩個檔案當成同一個。
-        let leftMap = Dictionary(uniqueKeysWithValues: left.map { ($0.name, $0) })
-        let rightMap = Dictionary(uniqueKeysWithValues: right.map { ($0.name, $0) })
+    static func compare(
+        left: [FileItem],
+        right: [FileItem],
+        depth: Int = 0
+    ) -> FolderComparisonResult {
+        // 用真實檔名做 key，避免 displayName 撞名（隱藏副檔名）時 crash。
+        let leftMap = keyedItems(left)
+        let rightMap = keyedItems(right)
         let names = Set(leftMap.keys).union(rightMap.keys)
         var leftStates: [String: FolderComparisonState] = [:]
         var rightStates: [String: FolderComparisonState] = [:]
@@ -35,12 +39,7 @@ enum FolderComparisonEngine {
                 continue
             }
 
-            let sameKind = leftItem.isDirectory == rightItem.isDirectory
-            let sameSize = leftItem.isDirectory || leftItem.fileSize == rightItem.fileSize
-            let leftDate = leftItem.modifiedDate?.timeIntervalSince1970 ?? 0
-            let rightDate = rightItem.modifiedDate?.timeIntervalSince1970 ?? 0
-            let sameDate = abs(leftDate - rightDate) < 2
-            let state: FolderComparisonState = sameKind && sameSize && sameDate ? .same : .different
+            let state = comparisonState(left: leftItem, right: rightItem, depth: depth)
             leftStates[name] = state
             rightStates[name] = state
         }
@@ -48,9 +47,9 @@ enum FolderComparisonEngine {
     }
 
     static func syncSources(from source: [FileItem], to destination: [FileItem]) -> [URL] {
-        let destinationMap = Dictionary(uniqueKeysWithValues: destination.map { ($0.name, $0) })
+        let destinationMap = keyedItems(destination)
         return source.compactMap { item in
-            guard let existing = destinationMap[item.name] else {
+            guard let existing = destinationMap[item.fileSystemName] else {
                 return item.url
             }
             guard item.isDirectory == existing.isDirectory else { return item.url }
@@ -62,6 +61,80 @@ enum FolderComparisonEngine {
                 : nil
         }
     }
+
+    static func syncOperations(
+        from source: [FileItem],
+        to destination: [FileItem],
+        destinationFolder: URL,
+        depth: Int = 0
+    ) -> [SyncOperation] {
+        let destinationMap = keyedItems(destination)
+        var operations: [SyncOperation] = []
+
+        for item in source {
+            let key = item.fileSystemName
+            guard let existing = destinationMap[key] else {
+                operations.append(SyncOperation(source: item.url, destinationFolder: destinationFolder))
+                continue
+            }
+            if item.shouldOpenAsFolder, existing.shouldOpenAsFolder, depth < 6 {
+                let childSource = (try? FileItem.load(from: item.url, showHidden: true)) ?? []
+                let childDestination = (try? FileItem.load(from: existing.url, showHidden: true)) ?? []
+                operations.append(
+                    contentsOf: syncOperations(
+                        from: childSource,
+                        to: childDestination,
+                        destinationFolder: existing.url,
+                        depth: depth + 1
+                    )
+                )
+                continue
+            }
+            guard item.isDirectory == existing.isDirectory else {
+                operations.append(SyncOperation(source: item.url, destinationFolder: destinationFolder))
+                continue
+            }
+            if item.isDirectory { continue }
+            let sourceDate = item.modifiedDate?.timeIntervalSince1970 ?? 0
+            let destinationDate = existing.modifiedDate?.timeIntervalSince1970 ?? 0
+            if item.fileSize != existing.fileSize || sourceDate > destinationDate + 1 {
+                operations.append(SyncOperation(source: item.url, destinationFolder: destinationFolder))
+            }
+        }
+        return operations
+    }
+
+    private static func keyedItems(_ items: [FileItem]) -> [String: FileItem] {
+        Dictionary(items.map { ($0.fileSystemName, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    private static func comparisonState(
+        left: FileItem,
+        right: FileItem,
+        depth: Int
+    ) -> FolderComparisonState {
+        if left.shouldOpenAsFolder, right.shouldOpenAsFolder, depth < 6 {
+            let leftChildren = (try? FileItem.load(from: left.url, showHidden: true)) ?? []
+            let rightChildren = (try? FileItem.load(from: right.url, showHidden: true)) ?? []
+            let nested = compare(left: leftChildren, right: rightChildren, depth: depth + 1)
+            let same = nested.leftOnlyCount == 0
+                && nested.rightOnlyCount == 0
+                && nested.differentCount == 0
+            return same ? .same : .different
+        }
+
+        let sameKind = left.isDirectory == right.isDirectory
+        let sameSize = left.isDirectory || left.fileSize == right.fileSize
+        let leftDate = left.modifiedDate?.timeIntervalSince1970 ?? 0
+        let rightDate = right.modifiedDate?.timeIntervalSince1970 ?? 0
+        let sameDate = abs(leftDate - rightDate) < 2
+        return sameKind && sameSize && sameDate ? .same : .different
+    }
+}
+
+struct SyncOperation: Equatable {
+    let source: URL
+    let destinationFolder: URL
 }
 
 enum BatchRenameMode: Int, CaseIterable {
@@ -72,10 +145,10 @@ enum BatchRenameMode: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .prefix: return "名稱前面加字"
-        case .suffix: return "名稱後面加字"
-        case .replace: return "搵字及取代"
-        case .number: return "順序編號"
+        case .prefix: return L("名稱前面加字")
+        case .suffix: return L("名稱後面加字")
+        case .replace: return L("搵字及取代")
+        case .number: return L("順序編號")
         }
     }
 }
@@ -88,25 +161,91 @@ enum BatchRenameEngine {
         secondText: String = ""
     ) -> [String] {
         items.enumerated().map { index, item in
-            let ext = item.isDirectory ? "" : item.url.pathExtension
-            let base = ext.isEmpty ? item.name : item.url.deletingPathExtension().lastPathComponent
+            let parts = nameParts(for: item)
             let renamedBase: String
             switch mode {
             case .prefix:
-                renamedBase = firstText + base
+                renamedBase = firstText + parts.base
             case .suffix:
-                renamedBase = base + firstText
+                renamedBase = parts.base + firstText
             case .replace:
-                renamedBase = base.replacingOccurrences(of: firstText, with: secondText)
+                renamedBase = parts.base.replacingOccurrences(of: firstText, with: secondText)
             case .number:
                 renamedBase = "\(firstText)\(index + 1)"
             }
-            return ext.isEmpty ? renamedBase : "\(renamedBase).\(ext)"
+            return parts.ext.isEmpty ? renamedBase : "\(renamedBase).\(parts.ext)"
         }
+    }
+
+    static func apply(
+        items: [FileItem],
+        names: [String],
+        fileManager: FileManager = .default
+    ) throws -> [(old: URL, new: URL)] {
+        var temporaryPairs: [(old: URL, temporary: URL, final: URL)] = []
+        do {
+            for (item, name) in zip(items, names) {
+                let parent = item.url.deletingLastPathComponent()
+                let finalURL = parent.appendingPathComponent(name)
+                if item.url.standardizedFileURL == finalURL.standardizedFileURL {
+                    continue
+                }
+                let temporary = parent.appendingPathComponent(
+                    ".FinderV2Rename-\(UUID().uuidString)"
+                )
+                try FileRenameSupport.moveItem(
+                    from: item.url,
+                    to: temporary,
+                    fileManager: fileManager
+                )
+                temporaryPairs.append((item.url, temporary, finalURL))
+            }
+            for pair in temporaryPairs {
+                try FileRenameSupport.moveItem(
+                    from: pair.temporary,
+                    to: pair.final,
+                    fileManager: fileManager
+                )
+            }
+            return temporaryPairs.map { (old: $0.old, new: $0.final) }
+        } catch {
+            for pair in temporaryPairs.reversed() {
+                if fileManager.fileExists(atPath: pair.temporary.path) {
+                    try? fileManager.moveItem(at: pair.temporary, to: pair.old)
+                } else if fileManager.fileExists(atPath: pair.final.path),
+                          !fileManager.fileExists(atPath: pair.old.path) {
+                    try? fileManager.moveItem(at: pair.final, to: pair.old)
+                }
+            }
+            throw error
+        }
+    }
+
+    static func nameParts(for item: FileItem) -> (base: String, ext: String) {
+        let lastComponent = item.url.lastPathComponent
+        let keepExtension = !item.isDirectory || item.isPackage
+        let pathExtension = keepExtension ? item.url.pathExtension : ""
+        let stripped = item.url.deletingPathExtension().lastPathComponent
+        if pathExtension.isEmpty || stripped.isEmpty || stripped == "." {
+            return (lastComponent, "")
+        }
+        return (stripped, pathExtension)
     }
 }
 
 enum ArchiveEngine {
+    static func zipEntryPath(for url: URL, in directory: URL) -> String {
+        let filePath = url.standardizedFileURL.path
+        let dirPath = directory.standardizedFileURL.path
+        if filePath == dirPath {
+            return "."
+        }
+        if filePath.hasPrefix(dirPath + "/") {
+            return String(filePath.dropFirst(dirPath.count + 1))
+        }
+        return url.lastPathComponent
+    }
+
     static func createZip(from urls: [URL], in directory: URL, named name: String) throws -> URL {
         let safeName = name.lowercased().hasSuffix(".zip") ? name : "\(name).zip"
         let destination = FileTransferCoordinator.availableURL(
@@ -116,7 +255,7 @@ enum ArchiveEngine {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
         process.currentDirectoryURL = directory
         process.arguments = ["-q", "-r", "-y", destination.path]
-            + urls.map(\.lastPathComponent)
+            + urls.map { zipEntryPath(for: $0, in: directory) }
         try run(process)
         return destination
     }
@@ -146,7 +285,7 @@ enum ArchiveEngine {
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
             let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
-            let message = String(data: data, encoding: .utf8) ?? "壓縮工具發生錯誤。"
+            let message = String(data: data, encoding: .utf8) ?? L("壓縮工具發生錯誤。")
             throw NSError(
                 domain: "FinderV2Archive",
                 code: Int(process.terminationStatus),
@@ -163,6 +302,11 @@ enum TransferJobState: String {
     case completed = "已完成"
     case cancelled = "已取消"
     case failed = "失敗"
+
+    /// 介面顯示用（rawValue 保持穩定，顯示先翻譯）。
+    var displayTitle: String {
+        L(rawValue)
+    }
 }
 
 final class TransferQueueCenter {
@@ -314,6 +458,12 @@ final class TransferQueueWindowController: NSWindowController {
 
     private let tableView = NSTableView()
     private var jobs: [TransferQueueCenter.Snapshot] = []
+    private let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("job"))
+    private let stateColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("state"))
+    private let pauseButton = NSButton(title: L("暫停"), target: nil, action: #selector(pauseSelected))
+    private let resumeButton = NSButton(title: L("繼續"), target: nil, action: #selector(resumeSelected))
+    private let cancelButton = NSButton(title: L("取消工作"), target: nil, action: #selector(cancelSelected))
+    private let clearButton = NSButton(title: L("清走已完成"), target: nil, action: #selector(clearFinished))
 
     private init() {
         let window = NSWindow(
@@ -322,7 +472,7 @@ final class TransferQueueWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "搬檔工作清單"
+        window.title = L("搬檔工作清單")
         window.minSize = NSSize(width: 480, height: 260)
         super.init(window: window)
         buildContent()
@@ -330,6 +480,12 @@ final class TransferQueueWindowController: NSWindowController {
             self,
             selector: #selector(queueChanged),
             name: .finderV2TransferQueueChanged,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageChanged),
+            name: .finderV2LanguageChanged,
             object: nil
         )
         reload()
@@ -350,11 +506,9 @@ final class TransferQueueWindowController: NSWindowController {
 
     private func buildContent() {
         guard let content = window?.contentView else { return }
-        let nameColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("job"))
-        nameColumn.title = "工作"
+        nameColumn.title = L("工作")
         nameColumn.width = 380
-        let stateColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("state"))
-        stateColumn.title = "狀態"
+        stateColumn.title = L("狀態")
         stateColumn.width = 120
         tableView.addTableColumn(nameColumn)
         tableView.addTableColumn(stateColumn)
@@ -369,11 +523,11 @@ final class TransferQueueWindowController: NSWindowController {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(scrollView)
 
-        let pause = NSButton(title: "暫停", target: self, action: #selector(pauseSelected))
-        let resume = NSButton(title: "繼續", target: self, action: #selector(resumeSelected))
-        let cancel = NSButton(title: "取消工作", target: self, action: #selector(cancelSelected))
-        let clear = NSButton(title: "清走已完成", target: self, action: #selector(clearFinished))
-        let buttons = NSStackView(views: [pause, resume, cancel, clear])
+        pauseButton.target = self
+        resumeButton.target = self
+        cancelButton.target = self
+        clearButton.target = self
+        let buttons = NSStackView(views: [pauseButton, resumeButton, cancelButton, clearButton])
         buttons.orientation = .horizontal
         buttons.spacing = 8
         buttons.translatesAutoresizingMaskIntoConstraints = false
@@ -387,6 +541,17 @@ final class TransferQueueWindowController: NSWindowController {
             buttons.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
             buttons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12)
         ])
+    }
+
+    @objc private func languageChanged() {
+        window?.title = L("搬檔工作清單")
+        nameColumn.title = L("工作")
+        stateColumn.title = L("狀態")
+        pauseButton.title = L("暫停")
+        resumeButton.title = L("繼續")
+        cancelButton.title = L("取消工作")
+        clearButton.title = L("清走已完成")
+        reload()
     }
 
     @objc private func queueChanged() {
@@ -449,7 +614,7 @@ extension TransferQueueWindowController: NSTableViewDataSource, NSTableViewDeleg
         }
         cell.textField?.stringValue = identifier.rawValue == "job"
             ? jobs[row].title
-            : jobs[row].state.rawValue
+            : jobs[row].state.displayTitle
         return cell
     }
 }

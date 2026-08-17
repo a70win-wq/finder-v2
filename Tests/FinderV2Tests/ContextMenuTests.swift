@@ -72,23 +72,23 @@ struct ContextMenuTests {
         )
 
         #expect(titles == [
-            "新增資料夾",
-            "貼上項目",
+            L("新增資料夾"),
+            L("貼上項目"),
             "—",
-            "顯示方式",
-            "排列方式",
-            "顯示選項…",
-            "顯示隱藏檔案"
+            L("顯示方式"),
+            L("排列方式"),
+            L("顯示選項…"),
+            L("顯示隱藏檔案")
         ])
         #expect(
             controller.contextMenuItemIsEnabledForTesting(
-                title: "貼上項目",
+                title: L("貼上項目"),
                 clipboardHasFiles: false
             ) == false
         )
         #expect(
             controller.contextMenuItemIsEnabledForTesting(
-                title: "貼上項目",
+                title: L("貼上項目"),
                 clipboardHasFiles: true
             ) == true
         )
@@ -126,13 +126,13 @@ struct ContextMenuTests {
         _ = controller.view
 
         #expect(controller.contextMenuTitlesForTesting(at: 0) == [
-            "開啟",
-            "在 Apple Finder 顯示",
-            "拷貝「測試資料夾」",
-            "複製路徑",
+            L("開啟"),
+            L("在 Apple Finder 顯示"),
+            String(format: L("拷貝「%@」"), "測試資料夾"),
+            L("複製路徑"),
             "—",
-            "取得資料",
-            "加入收藏"
+            L("取得資料"),
+            L("加入收藏")
         ])
     }
 
@@ -165,9 +165,9 @@ struct ContextMenuTests {
         _ = controller.view
 
         let titles = controller.contextMenuTitlesForTesting(at: 0)
-        #expect(titles.contains("狀態：舊資料夾／未連結"))
-        #expect(titles.contains("開啟 Google Drive 管理…"))
-        #expect(titles.contains("從側邊欄中移除"))
+        #expect(titles.contains(L("狀態：舊資料夾／未連結")))
+        #expect(titles.contains(L("開啟 Google Drive 管理…")))
+        #expect(titles.contains(L("從側邊欄中移除")))
     }
 
     @Test("移除雲端位置只改顯示設定，不會刪除資料夾")
@@ -205,9 +205,9 @@ struct ContextMenuTests {
         _ = controller.view
 
         let titles = controller.pathContextMenuTitlesForTesting()
-        #expect(titles.contains("複製路徑"))
-        #expect(titles.contains { $0.hasPrefix("拷貝「") })
-        #expect(titles.contains("取得資料"))
+        #expect(titles.contains(L("複製路徑")))
+        #expect(titles.contains { $0.contains("拷貝") || $0.hasPrefix("Copy") })
+        #expect(titles.contains(L("取得資料")))
     }
     @Test("撳路徑 folder 或空白位置都會顯示完整路徑")
     @MainActor
@@ -244,7 +244,7 @@ struct ContextMenuTests {
         )
         _ = controller.view
 
-        #expect(controller.refreshButtonTitleForTesting == "重新整理")
+        #expect(controller.refreshButtonTitleForTesting == L("重新整理"))
         #expect(controller.refreshButtonIsVisibleForTesting)
     }
 

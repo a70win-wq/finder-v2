@@ -19,11 +19,11 @@ final class SidebarViewController: NSViewController {
 
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
+    private let heading = NSTextField(labelWithString: L("常用位置"))
     private let locationProvider: () -> [SidebarLocation]
     private let workspaceNotificationCenter: NotificationCenter
     private(set) var locations: [SidebarLocation] = []
     private var isUpdatingSelection = false
-    private var isPreparingContextMenu = false
     private var contextFavoriteIndex: Int?
     private var contextLocationIndex: Int?
 
@@ -48,7 +48,6 @@ final class SidebarViewController: NSViewController {
         root.wantsLayer = true
         root.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
 
-        let heading = NSTextField(labelWithString: "常用位置")
         heading.font = .systemFont(ofSize: 10.5, weight: .semibold)
         heading.textColor = .secondaryLabelColor
         heading.translatesAutoresizingMaskIntoConstraints = false
@@ -92,8 +91,19 @@ final class SidebarViewController: NSViewController {
         reloadLocations()
     }
 
+    func applyLocalization() {
+        heading.stringValue = L("常用位置")
+        reloadLocations()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageChanged),
+            name: .finderV2LanguageChanged,
+            object: nil
+        )
         [
             NSWorkspace.didMountNotification,
             NSWorkspace.didUnmountNotification,
@@ -110,6 +120,11 @@ final class SidebarViewController: NSViewController {
 
     deinit {
         workspaceNotificationCenter.removeObserver(self)
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func languageChanged() {
+        applyLocalization()
     }
 
     func reloadLocations() {
@@ -193,19 +208,19 @@ final class SidebarViewController: NSViewController {
             return
         }
         let titleField = NSTextField(string: entry.title)
-        titleField.placeholderString = "顯示名稱"
+        titleField.placeholderString = L("顯示名稱")
         let groupField = NSTextField(string: entry.group)
-        groupField.placeholderString = "分組，例如：工作"
+        groupField.placeholderString = L("分組，例如：工作")
         let stack = NSStackView(views: [titleField, groupField])
         stack.orientation = .vertical
         stack.spacing = 8
         stack.frame = NSRect(x: 0, y: 0, width: 300, height: 56)
         let alert = NSAlert()
-        alert.messageText = "更改收藏"
-        alert.informativeText = "可以改顯示名稱及分組："
+        alert.messageText = L("更改收藏")
+        alert.informativeText = L("可以改顯示名稱及分組：")
         alert.accessoryView = stack
-        alert.addButton(withTitle: "儲存")
-        alert.addButton(withTitle: "取消")
+        alert.addButton(withTitle: L("儲存"))
+        alert.addButton(withTitle: L("取消"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let title = titleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
@@ -264,9 +279,9 @@ final class SidebarViewController: NSViewController {
     private func showCloudManagementUnavailable() {
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "搵唔到 Google Drive"
-        alert.informativeText = "請先開啟或重新安裝 Google Drive，再管理帳戶連結。"
-        alert.addButton(withTitle: "知道")
+        alert.messageText = L("搵唔到 Google Drive")
+        alert.informativeText = L("請先開啟或重新安裝 Google Drive，再管理帳戶連結。")
+        alert.addButton(withTitle: L("知道"))
         alert.runModal()
     }
 
@@ -319,13 +334,13 @@ final class SidebarViewController: NSViewController {
         } ?? "—"
         let alert = NSAlert()
         alert.messageText = location.title
-        alert.informativeText = [
-            "種類：資料夾",
-            "大小：\(size)",
-            "修改日期：\(modified)",
-            "位置：\(location.url.deletingLastPathComponent().path)"
-        ].joined(separator: "\n")
-        alert.addButton(withTitle: "知道")
+        alert.informativeText = String(
+            format: L("種類：資料夾\n大小：%@\n修改日期：%@\n位置：%@"),
+            size,
+            modified,
+            location.url.deletingLastPathComponent().path
+        )
+        alert.addButton(withTitle: L("知道"))
         alert.runModal()
     }
 
@@ -333,17 +348,6 @@ final class SidebarViewController: NSViewController {
         guard let location = contextLocation(), !location.isFavorite else { return }
         FavoriteStore.shared.add(location.url)
         reloadLocations()
-    }
-
-    private func prepareContextMenuSelection(at row: Int) {
-        guard row >= 0,
-              row < locations.count,
-              !tableView.selectedRowIndexes.contains(row) else {
-            return
-        }
-        isPreparingContextMenu = true
-        defer { isPreparingContextMenu = false }
-        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
     }
 
     private func contextLocation() -> SidebarLocation? {
@@ -382,9 +386,9 @@ final class SidebarViewController: NSViewController {
         } catch {
             let alert = NSAlert()
             alert.alertStyle = .warning
-            alert.messageText = "而家退出唔到"
-            alert.informativeText = "可能仲有檔案用緊。請關閉相關檔案，再試一次。"
-            alert.addButton(withTitle: "知道")
+            alert.messageText = L("而家退出唔到")
+            alert.informativeText = L("可能仲有檔案用緊。請關閉相關檔案，再試一次。")
+            alert.addButton(withTitle: L("知道"))
             alert.runModal()
         }
     }
@@ -419,7 +423,7 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
 
             cell.ejectButton.image = NSImage(
                 systemSymbolName: "eject.fill",
-                accessibilityDescription: "退出硬碟"
+                accessibilityDescription: L("退出硬碟")
             )
             cell.ejectButton.imagePosition = .imageOnly
             cell.ejectButton.bezelStyle = .inline
@@ -458,7 +462,7 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard !isUpdatingSelection, !isPreparingContextMenu else { return }
+        guard !isUpdatingSelection else { return }
         let row = tableView.selectedRow
         guard row >= 0, row < locations.count else { return }
         delegate?.sidebar(self, didChoose: locations[row])
@@ -515,7 +519,6 @@ extension SidebarViewController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = tableView.clickedRow
-        prepareContextMenuSelection(at: row)
         buildContextMenu(menu, for: row)
     }
 
@@ -526,7 +529,7 @@ extension SidebarViewController: NSMenuDelegate {
             if HiddenCloudLocationStore.hasHiddenLocations {
                 addContextMenuItem(
                     to: menu,
-                    title: "顯示已隱藏雲端位置",
+                    title: L("顯示已隱藏雲端位置"),
                     action: #selector(showHiddenCloudLocations)
                 )
             }
@@ -538,36 +541,36 @@ extension SidebarViewController: NSMenuDelegate {
 
         addContextMenuItem(
             to: menu,
-            title: "開啟",
+            title: L("開啟"),
             action: #selector(openContextLocation)
         )
         addContextMenuItem(
             to: menu,
-            title: "在 Apple Finder 顯示",
+            title: L("在 Apple Finder 顯示"),
             action: #selector(revealContextLocation)
         )
         addContextMenuItem(
             to: menu,
-            title: "拷貝「\(location.title)」",
+            title: String(format: L("拷貝「%@」"), location.title),
             action: #selector(copyContextLocation)
         )
         addContextMenuItem(
             to: menu,
-            title: "複製路徑",
+            title: L("複製路徑"),
             action: #selector(copyContextLocationPath)
         )
         menu.addItem(.separator())
         addContextMenuItem(
             to: menu,
-            title: "取得資料",
+            title: L("取得資料"),
             action: #selector(showContextLocationInfo)
         )
 
         if location.isCloudStorage {
             menu.addItem(.separator())
             let statusTitle = location.isFileProviderBacked
-                ? "狀態：已連結"
-                : "狀態：舊資料夾／未連結"
+                ? L("狀態：已連結")
+                : L("狀態：舊資料夾／未連結")
             let statusItem = menu.addItem(
                 withTitle: statusTitle,
                 action: nil,
@@ -577,13 +580,13 @@ extension SidebarViewController: NSMenuDelegate {
             if location.cloudProviderBundleIdentifier != nil {
                 addContextMenuItem(
                     to: menu,
-                    title: "開啟 Google Drive 管理…",
+                    title: L("開啟 Google Drive 管理…"),
                     action: #selector(openCloudProviderManagement)
                 )
             }
             addContextMenuItem(
                 to: menu,
-                title: "從側邊欄中移除",
+                title: L("從側邊欄中移除"),
                 action: #selector(hideContextCloudLocation)
             )
         }
@@ -591,28 +594,28 @@ extension SidebarViewController: NSMenuDelegate {
             menu.addItem(.separator())
             addContextMenuItem(
                 to: menu,
-                title: "改名稱及分組…",
+                title: L("改名稱及分組…"),
                 action: #selector(editFavorite)
             )
             addContextMenuItem(
                 to: menu,
-                title: "向上移",
+                title: L("向上移"),
                 action: #selector(moveFavoriteUp)
             )
             addContextMenuItem(
                 to: menu,
-                title: "向下移",
+                title: L("向下移"),
                 action: #selector(moveFavoriteDown)
             )
             addContextMenuItem(
                 to: menu,
-                title: "移除收藏",
+                title: L("移除收藏"),
                 action: #selector(removeFavorite)
             )
         } else {
             addContextMenuItem(
                 to: menu,
-                title: "加入收藏",
+                title: L("加入收藏"),
                 action: #selector(addContextLocationToFavorites)
             )
         }
@@ -621,7 +624,7 @@ extension SidebarViewController: NSMenuDelegate {
             menu.addItem(.separator())
             addContextMenuItem(
                 to: menu,
-                title: "退出 \(location.title)",
+                title: String(format: L("退出 %@"), location.title),
                 action: #selector(ejectContextVolume)
             )
         }
